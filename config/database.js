@@ -2,17 +2,15 @@
 // config/database.js - Database Configuration
 // ============================================
 
+ccat > config/database.js << 'EOF'
 const { Pool } = require('pg');
 
+// Use DATABASE_URL from Render PostgreSQL
 const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME || 'onebooks_db',
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || 'password',
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? {
+    rejectUnauthorized: false
+  } : false
 });
 
 pool.on('error', (err, client) => {
@@ -21,3 +19,4 @@ pool.on('error', (err, client) => {
 });
 
 module.exports = pool;
+EOF
