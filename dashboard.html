@@ -1,0 +1,1085 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OneBooks - Accounting Made Simple</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #f7f9fc;
+            color: #2c3e50;
+            line-height: 1.5;
+        }
+
+        .app-container {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* Login Screen */
+        .login-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+        }
+
+        .login-card {
+            background: white;
+            padding: 50px;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+            width: 450px;
+            max-width: 90%;
+            text-align: center;
+        }
+
+        .login-card h1 {
+            color: #2c3e50;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            font-weight: 300;
+        }
+
+        .login-card .tagline {
+            color: #7f8c8d;
+            margin-bottom: 40px;
+            font-size: 1.1em;
+        }
+
+        /* Sidebar - Zoho Books Style */
+        .sidebar {
+            width: 280px;
+            background: white;
+            border-right: 1px solid #e2e8f0;
+            padding: 0;
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+            z-index: 100;
+        }
+
+        .sidebar-header {
+            padding: 25px 20px;
+            border-bottom: 1px solid #e2e8f0;
+            background: #f8fafc;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            font-size: 1.8em;
+            font-weight: 600;
+            color: #2563eb;
+        }
+
+        .logo-icon {
+            margin-right: 12px;
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, #2563eb, #3b82f6);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 16px;
+        }
+
+        .company-name {
+            font-size: 0.9em;
+            color: #64748b;
+            margin-top: 5px;
+        }
+
+        .nav-section {
+            padding: 20px 0;
+        }
+
+        .nav-section-title {
+            font-size: 0.85em;
+            font-weight: 600;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 0 20px 10px;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 20px;
+            color: #475569;
+            text-decoration: none;
+            transition: all 0.2s ease;
+            cursor: pointer;
+            border-left: 3px solid transparent;
+        }
+
+        .nav-item:hover {
+            background-color: #f1f5f9;
+            color: #2563eb;
+        }
+
+        .nav-item.active {
+            background-color: #eff6ff;
+            color: #2563eb;
+            border-left-color: #2563eb;
+            font-weight: 500;
+        }
+
+        .nav-item-icon {
+            margin-right: 12px;
+            font-size: 18px;
+            width: 20px;
+            text-align: center;
+        }
+
+        .nav-item.has-submenu::after {
+            content: '▸';
+            margin-left: auto;
+            transition: transform 0.2s ease;
+        }
+
+        .nav-item.has-submenu.expanded::after {
+            transform: rotate(90deg);
+        }
+
+        .nav-submenu {
+            display: none;
+            background-color: #f8fafc;
+            padding: 8px 0;
+        }
+
+        .nav-submenu.show {
+            display: block;
+        }
+
+        .nav-submenu .nav-item {
+            padding: 8px 20px 8px 52px;
+            font-size: 0.9em;
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            margin-left: 280px;
+            background: #f7f9fc;
+            min-height: 100vh;
+        }
+
+        /* Top Header */
+        .top-header {
+            background: white;
+            padding: 15px 30px;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 50;
+        }
+
+        .breadcrumb {
+            display: flex;
+            align-items: center;
+            color: #64748b;
+            font-size: 0.9em;
+        }
+
+        .breadcrumb-item {
+            margin-right: 8px;
+        }
+
+        .breadcrumb-separator {
+            margin: 0 8px;
+            color: #cbd5e1;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .user-menu {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        /* Page Content */
+        .page-content {
+            padding: 30px;
+        }
+
+        .page-header {
+            margin-bottom: 30px;
+        }
+
+        .page-title {
+            font-size: 2em;
+            font-weight: 600;
+            color: #1e293b;
+            margin-bottom: 8px;
+        }
+
+        .page-subtitle {
+            color: #64748b;
+            font-size: 1.1em;
+        }
+
+        .page-actions {
+            display: flex;
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        /* Cards and Stats */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 25px;
+            margin-bottom: 40px;
+        }
+
+        .stat-card {
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 25px;
+            position: relative;
+            transition: all 0.2s ease;
+        }
+
+        .stat-card:hover {
+            box-shadow: 0 4px 25px rgba(0,0,0,0.08);
+            transform: translateY(-2px);
+        }
+
+        .stat-card-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            margin-bottom: 15px;
+        }
+
+        .stat-card-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+
+        .stat-card-title {
+            font-size: 0.9em;
+            color: #64748b;
+            font-weight: 500;
+        }
+
+        .stat-card-value {
+            font-size: 2.2em;
+            font-weight: 700;
+            color: #1e293b;
+            margin: 10px 0;
+        }
+
+        .stat-card-change {
+            font-size: 0.85em;
+            font-weight: 500;
+        }
+
+        .stat-card-change.positive {
+            color: #10b981;
+        }
+
+        .stat-card-change.negative {
+            color: #ef4444;
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 14px;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            gap: 8px;
+        }
+
+        .btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .btn-primary {
+            background: #2563eb;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #1d4ed8;
+        }
+
+        .btn-outline {
+            background: transparent;
+            border: 1px solid #d1d5db;
+            color: #374151;
+        }
+
+        .btn-outline:hover {
+            background: #f3f4f6;
+        }
+
+        /* Tables */
+        .table-container {
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 30px;
+        }
+
+        .table-header {
+            padding: 20px 25px;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .table-title {
+            font-size: 1.2em;
+            font-weight: 600;
+            color: #1e293b;
+        }
+
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .table th {
+            background: #f8fafc;
+            padding: 16px 20px;
+            text-align: left;
+            font-weight: 600;
+            color: #374151;
+            font-size: 0.9em;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .table td {
+            padding: 16px 20px;
+            border-bottom: 1px solid #f1f5f9;
+            color: #374151;
+        }
+
+        .table tbody tr:hover {
+            background-color: #f8fafc;
+        }
+
+        .table tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        /* Forms */
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #374151;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.2s ease;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: #2563eb;
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        /* Charts */
+        .chart-container {
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 25px;
+            margin-bottom: 30px;
+        }
+
+        .chart-header {
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .chart-title {
+            font-size: 1.3em;
+            font-weight: 600;
+            color: #1e293b;
+        }
+
+        .chart-canvas {
+            position: relative;
+            height: 300px;
+        }
+
+        /* Section Management */
+        .section {
+            display: none;
+        }
+
+        .section.active {
+            display: block;
+        }
+
+        /* Messages */
+        .message {
+            padding: 16px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .message-success {
+            background: #d1fae5;
+            color: #065f46;
+            border: 1px solid #a7f3d0;
+        }
+
+        .message-error {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #fca5a5;
+        }
+
+        /* Utility Classes */
+        .text-center { text-align: center; }
+        .text-right { text-align: right; }
+        .text-muted { color: #64748b; }
+        .text-success { color: #10b981; }
+        .text-danger { color: #ef4444; }
+
+        .mb-3 { margin-bottom: 24px; }
+        .mt-3 { margin-top: 24px; }
+
+        @media (max-width: 1024px) {
+            .sidebar {
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+            }
+            
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+            
+            .main-content {
+                margin-left: 0;
+            }
+            
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Login Screen -->
+    <div id="loginScreen" class="login-screen">
+        <div class="login-card">
+            <h1>OneBooks</h1>
+            <p class="tagline">Accounting Made Simple</p>
+            <form id="loginForm">
+                <div class="form-group">
+                    <input type="text" class="form-control" id="companyName" 
+                           placeholder="Enter your company name" required 
+                           style="font-size: 16px; padding: 16px;">
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%; font-size: 16px; padding: 16px;">
+                    Get Started
+                </button>
+            </form>
+            <div id="loginError" class="message message-error mt-3" style="display: none;"></div>
+        </div>
+    </div>
+
+    <div class="app-container" id="mainApp" style="display: none;">
+        <!-- Sidebar -->
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <div class="logo-icon">1B</div>
+                    <div>
+                        <div>OneBooks</div>
+                        <div class="company-name" id="companyNameDisplay"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-item active" onclick="showSection('dashboard')">
+                    <span class="nav-item-icon">📊</span>
+                    Dashboard
+                </div>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-section-title">Sales</div>
+                <div class="nav-item has-submenu" id="salesMenu" onclick="toggleSubmenu('salesSubmenu')">
+                    <span class="nav-item-icon">💰</span>
+                    Sales
+                </div>
+                <div class="nav-submenu" id="salesSubmenu">
+                    <div class="nav-item" onclick="showSection('customers')">Customers</div>
+                    <div class="nav-item" onclick="showSection('invoices')">Invoices</div>
+                    <div class="nav-item" onclick="showSection('credit-notes')">Credit Notes</div>
+                </div>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-section-title">Purchases</div>
+                <div class="nav-item has-submenu" id="purchasesMenu" onclick="toggleSubmenu('purchasesSubmenu')">
+                    <span class="nav-item-icon">🛒</span>
+                    Purchases
+                </div>
+                <div class="nav-submenu" id="purchasesSubmenu">
+                    <div class="nav-item" onclick="showSection('vendors')">Vendors</div>
+                    <div class="nav-item" onclick="showSection('expenses')">Expenses</div>
+                </div>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-item" onclick="showSection('items')">
+                    <span class="nav-item-icon">📦</span>
+                    Items
+                </div>
+                <div class="nav-item has-submenu" id="reportsMenu" onclick="toggleSubmenu('reportsSubmenu')">
+                    <span class="nav-item-icon">📈</span>
+                    Reports
+                </div>
+                <div class="nav-submenu" id="reportsSubmenu">
+                    <div class="nav-item" onclick="showSection('profit-loss')">Profit & Loss</div>
+                    <div class="nav-item" onclick="showSection('balance-sheet')">Balance Sheet</div>
+                    <div class="nav-item" onclick="showSection('cash-flow')">Cash Flow</div>
+                </div>
+            </div>
+
+            <div class="nav-section" style="position: absolute; bottom: 20px; width: 100%;">
+                <div class="nav-item" onclick="logout()" style="color: #ef4444;">
+                    <span class="nav-item-icon">🚪</span>
+                    Logout
+                </div>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Top Header -->
+            <header class="top-header">
+                <div class="breadcrumb">
+                    <span class="breadcrumb-item">OneBooks</span>
+                    <span class="breadcrumb-separator">/</span>
+                    <span class="breadcrumb-item" id="currentPageBreadcrumb">Dashboard</span>
+                </div>
+                <div class="header-actions">
+                    <div class="user-menu">
+                        <div class="avatar" onclick="showMessage('Profile feature coming soon!', 'info')">
+                            <span id="userInitials">U</span>
+                        </div>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Dashboard Section -->
+            <div id="dashboard" class="section active">
+                <div class="page-content">
+                    <div class="page-header">
+                        <h1 class="page-title">Dashboard</h1>
+                        <p class="page-subtitle">Welcome back! Here's what's happening with your business.</p>
+                        <div class="page-actions">
+                            <button class="btn btn-outline" onclick="refreshDashboard()">
+                                🔄 Refresh
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-card-header">
+                                <div>
+                                    <div class="stat-card-title">Total Receivables</div>
+                                    <div class="stat-card-value" id="totalReceivables">$0.00</div>
+                                    <div class="stat-card-change positive">Current: <span id="currentReceivables">$0.00</span></div>
+                                </div>
+                                <div class="stat-card-icon" style="background: linear-gradient(135deg, #10b981, #059669);">
+                                    💵
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="stat-card">
+                            <div class="stat-card-header">
+                                <div>
+                                    <div class="stat-card-title">Total Payables</div>
+                                    <div class="stat-card-value" id="totalPayables">$0.00</div>
+                                    <div class="stat-card-change negative">Overdue: <span id="overduePayables">$0.00</span></div>
+                                </div>
+                                <div class="stat-card-icon" style="background: linear-gradient(135deg, #ef4444, #dc2626);">
+                                    💸
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="stat-card">
+                            <div class="stat-card-header">
+                                <div>
+                                    <div class="stat-card-title">Net Profit</div>
+                                    <div class="stat-card-value" id="netProfit">$0.00</div>
+                                    <div class="stat-card-change" id="profitChange">This fiscal year</div>
+                                </div>
+                                <div class="stat-card-icon" style="background: linear-gradient(135deg, #3b82f6, #2563eb);">
+                                    📊
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="stat-card">
+                            <div class="stat-card-header">
+                                <div>
+                                    <div class="stat-card-title">Outstanding Invoices</div>
+                                    <div class="stat-card-value" id="outstandingInvoices">0</div>
+                                    <div class="stat-card-change" id="overdueCount">Overdue: 0</div>
+                                </div>
+                                <div class="stat-card-icon" style="background: linear-gradient(135deg, #f59e0b, #d97706);">
+                                    📋
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <div class="chart-header">
+                            <h3 class="chart-title">Cash Flow</h3>
+                        </div>
+                        <div class="chart-canvas">
+                            <canvas id="cashFlowChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="table-container">
+                        <div class="table-header">
+                            <h3 class="table-title">Recent Activity</h3>
+                        </div>
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Description</th>
+                                    <th>Type</th>
+                                    <th class="text-right">Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recentActivityTable">
+                                <tr>
+                                    <td colspan="4" class="text-center text-muted">Loading recent activity...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Other sections (Items, Customers, Invoices, etc.) -->
+            <div id="items" class="section">
+                <div class="page-content">
+                    <h1 class="page-title">Items</h1>
+                    <p class="text-muted">Items module - Coming soon!</p>
+                </div>
+            </div>
+
+            <div id="customers" class="section">
+                <div class="page-content">
+                    <h1 class="page-title">Customers</h1>
+                    <p class="text-muted">Customers module - Coming soon!</p>
+                </div>
+            </div>
+
+            <div id="invoices" class="section">
+                <div class="page-content">
+                    <h1 class="page-title">Invoices</h1>
+                    <p class="text-muted">Invoices module - Coming soon!</p>
+                </div>
+            </div>
+
+            <div id="credit-notes" class="section">
+                <div class="page-content">
+                    <h1 class="page-title">Credit Notes</h1>
+                    <p class="text-muted">Credit Notes module - Coming soon!</p>
+                </div>
+            </div>
+
+            <div id="vendors" class="section">
+                <div class="page-content">
+                    <h1 class="page-title">Vendors</h1>
+                    <p class="text-muted">Vendors module - Coming soon!</p>
+                </div>
+            </div>
+
+            <div id="expenses" class="section">
+                <div class="page-content">
+                    <h1 class="page-title">Expenses</h1>
+                    <p class="text-muted">Expenses module - Coming soon!</p>
+                </div>
+            </div>
+
+            <div id="profit-loss" class="section">
+                <div class="page-content">
+                    <h1 class="page-title">Profit & Loss</h1>
+                    <p class="text-muted">P&L Report - Coming soon!</p>
+                </div>
+            </div>
+
+            <div id="balance-sheet" class="section">
+                <div class="page-content">
+                    <h1 class="page-title">Balance Sheet</h1>
+                    <p class="text-muted">Balance Sheet - Coming soon!</p>
+                </div>
+            </div>
+
+            <div id="cash-flow" class="section">
+                <div class="page-content">
+                    <h1 class="page-title">Cash Flow</h1>
+                    <p class="text-muted">Cash Flow Report - Coming soon!</p>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // API Configuration
+        const API_BASE_URL = 'http://localhost:5000/api';
+        let authToken = '';
+        let companyData = {};
+        let cashFlowChart = null;
+
+        // Initialize app
+        document.addEventListener('DOMContentLoaded', function() {
+            const token = localStorage.getItem('authToken');
+            if (token) {
+                authToken = token;
+                initializeApp();
+            } else {
+                showLoginScreen();
+            }
+        });
+
+        // Authentication
+        function showLoginScreen() {
+            document.getElementById('loginScreen').style.display = 'flex';
+            document.getElementById('mainApp').style.display = 'none';
+        }
+
+        function hideLoginScreen() {
+            document.getElementById('loginScreen').style.display = 'none';
+            document.getElementById('mainApp').style.display = 'flex';
+        }
+
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const companyName = document.getElementById('companyName').value.trim();
+            if (!companyName) {
+                showError('loginError', 'Company name is required');
+                return;
+            }
+            
+            const submitBtn = this.querySelector('button[type="submit"]');
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Logging in...';
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ company_name: companyName })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    authToken = data.token;
+                    companyData = data.company;
+                    localStorage.setItem('authToken', authToken);
+                    hideLoginScreen();
+                    initializeApp();
+                } else {
+                    showError('loginError', data.message || 'Login failed');
+                }
+            } catch (error) {
+                showError('loginError', 'Connection error. Make sure the backend is running.');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Get Started';
+            }
+        });
+
+        function logout() {
+            authToken = '';
+            localStorage.removeItem('authToken');
+            showLoginScreen();
+            showMessage('Logged out successfully', 'success');
+        }
+
+        // Initialize app
+        async function initializeApp() {
+            document.getElementById('companyNameDisplay').textContent = companyData.name;
+            document.getElementById('userInitials').textContent = companyData.name.charAt(0).toUpperCase();
+            
+            await loadDashboardData();
+            initializeCharts();
+        }
+
+        // Load dashboard data
+        async function loadDashboardData() {
+            try {
+                const stats = await apiRequest('/dashboard/stats');
+                
+                document.getElementById('totalReceivables').textContent = `$${stats.total_receivables.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+                document.getElementById('currentReceivables').textContent = `$${stats.current_receivables.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+                document.getElementById('totalPayables').textContent = `$${stats.total_payables.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+                document.getElementById('overduePayables').textContent = `$${stats.overdue_payables.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+                document.getElementById('netProfit').textContent = `$${stats.net_profit.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+                document.getElementById('outstandingInvoices').textContent = stats.outstanding_invoices;
+                document.getElementById('overdueCount').textContent = `Overdue: ${stats.overdue_invoices}`;
+                
+                // Update recent activity
+                const tableBody = document.getElementById('recentActivityTable');
+                tableBody.innerHTML = '';
+                
+                if (stats.recent_activity.length === 0) {
+                    tableBody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No recent activity</td></tr>';
+                } else {
+                    stats.recent_activity.forEach(activity => {
+                        const row = tableBody.insertRow();
+                        row.innerHTML = `
+                            <td>${formatDate(activity.date)}</td>
+                            <td>${activity.description}</td>
+                            <td>${activity.type}</td>
+                            <td class="text-right" style="color: ${activity.amount >= 0 ? '#10b981' : '#ef4444'};">
+                                ${activity.amount >= 0 ? '+' : ''}$${Math.abs(activity.amount).toLocaleString('en-US', {minimumFractionDigits: 2})}
+                            </td>
+                        `;
+                    });
+                }
+            } catch (error) {
+                console.error('Failed to load dashboard data:', error);
+                showMessage('Failed to load dashboard data', 'error');
+            }
+        }
+
+        // Initialize charts
+        async function initializeCharts() {
+            try {
+                const trendData = await apiRequest('/dashboard/monthly-trend');
+                
+                const ctx = document.getElementById('cashFlowChart').getContext('2d');
+                
+                if (cashFlowChart) {
+                    cashFlowChart.destroy();
+                }
+                
+                cashFlowChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: trendData.months_data.map(m => m.month),
+                        datasets: [{
+                            label: 'Revenue',
+                            data: trendData.months_data.map(m => m.revenue),
+                            borderColor: '#3b82f6',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        }, {
+                            label: 'Expenses',
+                            data: trendData.months_data.map(m => m.expenses),
+                            borderColor: '#ef4444',
+                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: {
+                                    callback: function(value) {
+                                        return '$' + value.toLocaleString();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error('Failed to initialize charts:', error);
+            }
+        }
+
+        // API request helper
+        async function apiRequest(endpoint, options = {}) {
+            const url = `${API_BASE_URL}${endpoint}`;
+            const config = {
+                ...options,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${authToken}`,
+                    ...options.headers
+                }
+            };
+
+            try {
+                const response = await fetch(url, config);
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        logout();
+                        return;
+                    }
+                    throw new Error(data.message || 'Request failed');
+                }
+                
+                return data;
+            } catch (error) {
+                console.error('API Error:', error);
+                throw error;
+            }
+        }
+
+        // Navigation
+        function showSection(sectionId) {
+            const sections = document.querySelectorAll('.section');
+            sections.forEach(section => section.classList.remove('active'));
+            
+            const navItems = document.querySelectorAll('.nav-item');
+            navItems.forEach(item => item.classList.remove('active'));
+            
+            document.getElementById(sectionId).classList.add('active');
+            event.target.classList.add('active');
+            
+            document.getElementById('currentPageBreadcrumb').textContent = 
+                sectionId.charAt(0).toUpperCase() + sectionId.slice(1).replace('-', ' ');
+        }
+
+        function toggleSubmenu(submenuId) {
+            const submenu = document.getElementById(submenuId);
+            const menuItem = event.currentTarget;
+            
+            submenu.classList.toggle('show');
+            menuItem.classList.toggle('expanded');
+        }
+
+        function refreshDashboard() {
+            loadDashboardData();
+            initializeCharts();
+            showMessage('Dashboard refreshed successfully', 'success');
+        }
+
+        // Utility functions
+        function formatDate(dateString) {
+            const date = new Date(dateString);
+            return date.toLocaleDateString('en-US', { 
+                year: 'numeric', 
+                month: 'short', 
+                day: 'numeric' 
+            });
+        }
+
+        function showMessage(message, type = 'info') {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message message-${type}`;
+            messageDiv.textContent = message;
+            messageDiv.style.position = 'fixed';
+            messageDiv.style.top = '20px';
+            messageDiv.style.right = '20px';
+            messageDiv.style.zIndex = '10000';
+            messageDiv.style.minWidth = '300px';
+            
+            document.body.appendChild(messageDiv);
+            
+            setTimeout(() => {
+                messageDiv.remove();
+            }, 5000);
+        }
+
+        function showError(elementId, message) {
+            const errorElement = document.getElementById(elementId);
+            errorElement.textContent = message;
+            errorElement.style.display = 'block';
+            
+            setTimeout(() => {
+                errorElement.style.display = 'none';
+            }, 5000);
+        }
+    </script>
+</body>
+</html>
