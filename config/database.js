@@ -2,10 +2,9 @@
 // config/database.js - Database Configuration
 // ============================================
 
-ccat > config/database.js << 'EOF'
 const { Pool } = require('pg');
 
-// Use DATABASE_URL from Render PostgreSQL
+// Use DATABASE_URL from Render/Supabase PostgreSQL
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === 'production' ? {
@@ -19,4 +18,3 @@ pool.on('error', (err, client) => {
 });
 
 module.exports = pool;
-EOF

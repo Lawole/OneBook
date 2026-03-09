@@ -16,7 +16,7 @@ const customerRoutes = require('./routes/customer');
 const vendorRoutes = require('./routes/vendor');
 const itemRoutes = require('./routes/item');
 const invoiceRoutes = require('./routes/invoice');
-const creditNoteRoutes = require('./routes/creditNote');
+const creditNoteRoutes = require('./routes/creditnote');
 const expenseRoutes = require('./routes/expense');
 const reportRoutes = require('./routes/report');
 const dashboardRoutes = require('./routes/dashboard');
@@ -25,7 +25,10 @@ const app = express();
 
 // Middleware
 app.use(helmet());
-app.use(cors());
+app.use(cors({
+  origin: process.env.FRONTEND_URL || '*',
+  credentials: true,
+}));
 app.use(compression());
 app.use(morgan('combined'));
 app.use(express.json());
