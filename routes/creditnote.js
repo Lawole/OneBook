@@ -85,19 +85,13 @@ router.post('/', authMiddleware, async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // Generate credit note number
-    const lastCNResult = await client.query(
-      `SELECT credit_note_number FROM credit_notes WHERE company_id = $1 ORDER BY id DESC LIMIT 1`,
+    // Generate credit note number - use MAX to avoid duplicates from deleted records or race conditions
+    const maxResult = await client.query(
+      `SELECT COALESCE(MAX(CAST(SPLIT_PART(credit_note_number, '-', 2) AS INTEGER)), 0) as max_num
+       FROM credit_notes WHERE company_id = $1 AND credit_note_number ~ '^CN-[0-9]+$'`,
       [req.companyId]
     );
-
-    let credit_note_number;
-    if (lastCNResult.rows.length > 0) {
-      const lastNumber = parseInt(lastCNResult.rows[0].credit_note_number.split('-')[1]);
-      credit_note_number = `CN-${String(lastNumber + 1).padStart(4, '0')}`;
-    } else {
-      credit_note_number = 'CN-0001';
-    }
+    const credit_note_number = `CN-${String(maxResult.rows[0].max_num + 1).padStart(4, '0')}`;
 
     // Calculate totals
     let subtotal = 0;

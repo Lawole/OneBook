@@ -81,13 +81,13 @@ router.post('/', authMiddleware, async (req, res) => {
   }
 
   try {
-    // Auto-generate expense number
-    const countResult = await pool.query(
-      'SELECT COUNT(*) FROM expenses WHERE company_id = $1',
+    // Auto-generate expense number - use MAX to avoid duplicates from deleted records
+    const maxResult = await pool.query(
+      `SELECT COALESCE(MAX(CAST(SPLIT_PART(expense_number, '-', 2) AS INTEGER)), 0) as max_num
+       FROM expenses WHERE company_id = $1 AND expense_number ~ '^EXP-[0-9]+$'`,
       [req.companyId]
     );
-    const count = parseInt(countResult.rows[0].count) + 1;
-    const expense_number = `EXP-${String(count).padStart(4, '0')}`;
+    const expense_number = `EXP-${String(maxResult.rows[0].max_num + 1).padStart(4, '0')}`;
 
     const result = await pool.query(
       `INSERT INTO expenses (company_id, vendor_id, expense_date, expense_number, description, category, amount, tax_amount, notes, created_at, updated_at)

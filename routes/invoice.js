@@ -99,19 +99,13 @@ router.post('/', authMiddleware, async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // Generate invoice number
-    const lastInvoiceResult = await client.query(
-      `SELECT invoice_number FROM invoices WHERE company_id = $1 ORDER BY id DESC LIMIT 1`,
+    // Generate invoice number - use MAX to avoid duplicates from deleted records or race conditions
+    const maxResult = await client.query(
+      `SELECT COALESCE(MAX(CAST(SPLIT_PART(invoice_number, '-', 2) AS INTEGER)), 0) as max_num
+       FROM invoices WHERE company_id = $1 AND invoice_number ~ '^INV-[0-9]+$'`,
       [req.companyId]
     );
-
-    let invoice_number;
-    if (lastInvoiceResult.rows.length > 0) {
-      const lastNumber = parseInt(lastInvoiceResult.rows[0].invoice_number.split('-')[1]);
-      invoice_number = `INV-${String(lastNumber + 1).padStart(4, '0')}`;
-    } else {
-      invoice_number = 'INV-0001';
-    }
+    const invoice_number = `INV-${String(maxResult.rows[0].max_num + 1).padStart(4, '0')}`;
 
     // Calculate totals
     let subtotal = 0;
