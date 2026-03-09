@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Search, Edit, Trash2 } from 'lucide-react';
 import Header from '../components/Header';
 import { vendorAPI } from '../services/api';
@@ -8,11 +8,7 @@ const Vendors = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
 
-  useEffect(() => {
-    fetchVendors();
-  }, [search]); // eslint-disable-next-line react-hooks/exhaustive-deps
-
-  const fetchVendors = async () => {
+  const fetchVendors = useCallback(async () => {
     try {
       const response = await vendorAPI.getAll({ search });
       setVendors(response.data.vendors);
@@ -21,7 +17,11 @@ const Vendors = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [search]);
+
+  useEffect(() => {
+    fetchVendors();
+  }, [fetchVendors]);
 
   const handleDelete = async (id) => {
     if (window.confirm('Are you sure you want to delete this vendor?')) {

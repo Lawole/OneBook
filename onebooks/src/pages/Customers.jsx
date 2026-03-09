@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Search, Edit, Trash2 } from 'lucide-react';
 import Header from '../components/Header';
 import { customerAPI } from '../services/api';
@@ -12,12 +12,7 @@ const Customers = () => {
   const [search, setSearch] = useState('');
   const { isDemoMode } = useAuth();
 
-  useEffect(() => {
-    fetchCustomers();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search]);
-
-  const fetchCustomers = async () => {
+  const fetchCustomers = useCallback(async () => {
     if (isDemoMode) {
       // Use mock data in demo mode
       const filtered = mockCustomers.filter(c => 
@@ -38,7 +33,11 @@ const Customers = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isDemoMode, search]);
+
+  useEffect(() => {
+    fetchCustomers();
+  }, [fetchCustomers]);
 
   const handleDelete = async (id) => {
     if (isDemoMode) {
