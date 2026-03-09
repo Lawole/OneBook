@@ -95,21 +95,11 @@ export const itemAPI = {
 };
 
 export const expenseAPI = {
-  getAll: (params) => {
-    if (isDemoMode()) {
-      return Promise.reject(new Error('Demo mode'));
-    }
-    return api.get('/expenses', { params });
-  },
+  getAll: (params) => api.get('/expenses', { params }),
   create: (data) => api.post('/expenses', data),
   update: (id, data) => api.put(`/expenses/${id}`, data),
   delete: (id) => api.delete(`/expenses/${id}`),
-  getCategories: () => {
-    if (isDemoMode()) {
-      return Promise.reject(new Error('Demo mode'));
-    }
-    return api.get('/expenses/categories/list');
-  },
+  getCategories: () => api.get('/expenses/categories/list'),
 };
 
 export const vendorAPI = {

@@ -101,6 +101,26 @@ router.post('/', authMiddleware, async (req, res) => {
   }
 });
 
+// PUT /expenses/:id
+router.put('/:id', authMiddleware, async (req, res) => {
+  const { description, category, amount, expense_date, vendor_id, notes, tax_amount } = req.body;
+  if (!description || !category || !amount || !expense_date) {
+    return res.status(400).json({ message: 'Description, category, amount and date are required' });
+  }
+  try {
+    const result = await pool.query(
+      `UPDATE expenses SET description=$1, category=$2, amount=$3, expense_date=$4,
+       vendor_id=$5, notes=$6, tax_amount=$7, updated_at=NOW()
+       WHERE id=$8 AND company_id=$9 RETURNING *`,
+      [description, category, amount, expense_date, vendor_id || null, notes || null, tax_amount || 0, req.params.id, req.companyId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Expense not found' });
+    res.json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating expense', error: error.message });
+  }
+});
+
 // DELETE /expenses/:id
 router.delete('/:id', authMiddleware, async (req, res) => {
   try {
