@@ -11,6 +11,7 @@ import {
   LogOut,
   ChevronDown,
   ChevronRight,
+  Landmark,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -45,6 +46,7 @@ const Sidebar = () => {
       toggle: () => setPurchasesOpen(!purchasesOpen),
     },
     { path: '/items', icon: Package, label: 'Items' },
+    { path: '/banking', icon: Landmark, label: 'Banking' },
     {
       label: 'Reports',
       icon: FileText,

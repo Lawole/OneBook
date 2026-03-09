@@ -11,6 +11,7 @@ import Items from './pages/Items';
 import Vendors from './pages/Vendors';
 import Expenses from './pages/Expenses';
 import Reports from './pages/Reports';
+import Banking from './pages/Banking';
 import './App.css';
 
 const PrivateRoute = ({ children }) => {
@@ -106,6 +107,7 @@ const AppContent = () => {
                 </PrivateRoute>
               }
             />
+            <Route path="/banking" element={<PrivateRoute><Banking /></PrivateRoute>} />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </div>

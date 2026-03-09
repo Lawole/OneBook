@@ -121,4 +121,20 @@ export const reportAPI = {
   exportCashFlow: (format) => api.get(`/reports/cash-flow/export?format=${format}`, { responseType: 'blob' }),
 };
 
+export const bankingAPI = {
+  getAccounts: () => api.get('/banking/accounts'),
+  createAccount: (data) => api.post('/banking/accounts', data),
+  updateAccount: (id, data) => api.put(`/banking/accounts/${id}`, data),
+  deleteAccount: (id) => api.delete(`/banking/accounts/${id}`),
+  importStatement: (accountId, file) => {
+    const form = new FormData();
+    form.append('statement', file);
+    return api.post(`/banking/accounts/${accountId}/import`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+  },
+  getTransactions: (params) => api.get('/banking/transactions', { params }),
+  updateTransaction: (id, data) => api.put(`/banking/transactions/${id}`, data),
+  deleteTransaction: (id) => api.delete(`/banking/transactions/${id}`),
+  getMatchSuggestions: (id) => api.get(`/banking/match-suggestions/${id}`),
+};
+
 export default api;
