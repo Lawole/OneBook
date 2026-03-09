@@ -26,12 +26,22 @@ const app = express();
 // Middleware
 app.use(helmet());
 
-const allowedOrigin = process.env.FRONTEND_URL
-  ? process.env.FRONTEND_URL.replace(/\/$/, '') // strip trailing slash if any
-  : '*';
+// Support multiple comma-separated origins e.g. "https://a.vercel.app,https://b.vercel.app"
+const rawOrigins = process.env.FRONTEND_URL || '';
+const allowedOrigins = rawOrigins
+  .split(',')
+  .map((o) => o.trim().replace(/\/$/, ''))
+  .filter(Boolean);
 
 app.use(cors({
-  origin: allowedOrigin,
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, curl, Render health checks)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    callback(new Error(`CORS: origin ${origin} not allowed`));
+  },
   credentials: true,
 }));
 app.use(compression());
