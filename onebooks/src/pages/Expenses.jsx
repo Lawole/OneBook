@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Search, Edit, Trash2 } from 'lucide-react';
 import Header from '../components/Header';
 import { expenseAPI } from '../services/api';
@@ -11,12 +11,7 @@ const Expenses = () => {
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
 
-  useEffect(() => {
-    fetchExpenses();
-    fetchCategories();
-  }, [search, categoryFilter]);
-
-  const fetchExpenses = async () => {
+  const fetchExpenses = useCallback(async () => {
     try {
       const response = await expenseAPI.getAll({ search, category: categoryFilter });
       setExpenses(response.data.expenses);
@@ -25,7 +20,12 @@ const Expenses = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [search, categoryFilter]);
+
+  useEffect(() => {
+    fetchExpenses();
+    fetchCategories();
+  }, [fetchExpenses]);
 
   const fetchCategories = async () => {
     try {

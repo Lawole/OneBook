@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bell, Search, User } from 'lucide-react';
+import { Bell, Search } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 const Header = ({ title, subtitle }) => {

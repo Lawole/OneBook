@@ -8,7 +8,6 @@ import {
   ShoppingCart,
   Package,
   TrendingUp,
-  Settings,
   LogOut,
   ChevronDown,
   ChevronRight,

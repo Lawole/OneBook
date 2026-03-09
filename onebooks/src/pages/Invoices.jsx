@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Search, Download, Eye } from 'lucide-react';
 import Header from '../components/Header';
 import { invoiceAPI } from '../services/api';
@@ -10,11 +10,7 @@ const Invoices = () => {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
 
-  useEffect(() => {
-    fetchInvoices();
-  }, [search, statusFilter]); // eslint-disable-next-line react-hooks/exhaustive-deps
-
-  const fetchInvoices = async () => {
+  const fetchInvoices = useCallback(async () => {
     try {
       const response = await invoiceAPI.getAll({ search, status: statusFilter });
       setInvoices(response.data.invoices);
@@ -23,7 +19,11 @@ const Invoices = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [search, statusFilter]);
+
+  useEffect(() => {
+    fetchInvoices();
+  }, [fetchInvoices]);
 
   const handleDownloadPDF = async (id, invoiceNumber) => {
     try {

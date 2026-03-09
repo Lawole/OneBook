@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Search, Edit, Trash2 } from 'lucide-react';
 import Header from '../components/Header';
 import { itemAPI } from '../services/api';
@@ -9,11 +9,7 @@ const Items = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
 
-  useEffect(() => {
-    fetchItems();
-  }, [search]); // eslint-disable-next-line react-hooks/exhaustive-deps
-
-  const fetchItems = async () => {
+  const fetchItems = useCallback(async () => {
     try {
       const response = await itemAPI.getAll({ search });
       setItems(response.data.items);
@@ -22,7 +18,11 @@ const Items = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [search]);
+
+  useEffect(() => {
+    fetchItems();
+  }, [fetchItems]);
 
   const handleDelete = async (id) => {
     if (window.confirm('Are you sure you want to delete this item?')) {
