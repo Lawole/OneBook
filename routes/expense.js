@@ -1,5 +1,5 @@
 // ============================================
-// routes/dashboard.js - Dashboard Routes
+// routes/expense.js - Expense Routes
 // ============================================
 
 const express = require('express');
@@ -7,139 +7,111 @@ const router = express.Router();
 const pool = require('../config/database');
 const authMiddleware = require('../middleware/auth');
 
-// Get dashboard statistics
-router.get('/stats', authMiddleware, async (req, res) => {
+const CATEGORIES = [
+  { value: 'office-supplies', label: 'Office Supplies' },
+  { value: 'travel', label: 'Travel' },
+  { value: 'utilities', label: 'Utilities' },
+  { value: 'rent', label: 'Rent' },
+  { value: 'salaries', label: 'Salaries' },
+  { value: 'marketing', label: 'Marketing' },
+  { value: 'software', label: 'Software & Subscriptions' },
+  { value: 'equipment', label: 'Equipment' },
+  { value: 'maintenance', label: 'Maintenance' },
+  { value: 'other', label: 'Other' },
+];
+
+// GET /expenses/categories/list
+router.get('/categories/list', authMiddleware, (req, res) => {
+  res.json({ categories: CATEGORIES });
+});
+
+// GET /expenses
+router.get('/', authMiddleware, async (req, res) => {
+  const { search = '', category = '', page = 1, per_page = 20 } = req.query;
+  const offset = (page - 1) * per_page;
+
   try {
-    // Total receivables (unpaid invoices)
-    const receivablesResult = await pool.query(
-      `SELECT COALESCE(SUM(total_amount), 0) as total, 
-              COALESCE(SUM(CASE WHEN status = 'sent' THEN total_amount ELSE 0 END), 0) as current
-       FROM invoices 
-       WHERE company_id = $1 AND status IN ('sent', 'overdue')`,
-      [req.companyId]
+    let whereClause = 'WHERE e.company_id = $1';
+    const params = [req.companyId];
+    let idx = 2;
+
+    if (search) {
+      whereClause += ` AND (e.description ILIKE $${idx} OR e.expense_number ILIKE $${idx})`;
+      params.push(`%${search}%`);
+      idx++;
+    }
+    if (category) {
+      whereClause += ` AND e.category = $${idx}`;
+      params.push(category);
+      idx++;
+    }
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*) FROM expenses e ${whereClause}`,
+      params
     );
 
-    // Total payables (estimated from expenses)
-    const payablesResult = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) as total
-       FROM expenses 
-       WHERE company_id = $1`,
-      [req.companyId]
+    const result = await pool.query(
+      `SELECT e.*, v.name as vendor_name
+       FROM expenses e
+       LEFT JOIN vendors v ON e.vendor_id = v.id
+       ${whereClause}
+       ORDER BY e.expense_date DESC
+       LIMIT $${idx} OFFSET $${idx + 1}`,
+      [...params, per_page, offset]
     );
-
-    // Net profit (revenue - expenses)
-    const revenueResult = await pool.query(
-      `SELECT COALESCE(SUM(total_amount), 0) as total
-       FROM invoices 
-       WHERE company_id = $1 AND status = 'paid'`,
-      [req.companyId]
-    );
-
-    const expensesResult = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) as total
-       FROM expenses 
-       WHERE company_id = $1`,
-      [req.companyId]
-    );
-
-    const revenue = parseFloat(revenueResult.rows[0].total);
-    const expenses = parseFloat(expensesResult.rows[0].total);
-    const netProfit = revenue - expenses;
-
-    // Outstanding invoices count
-    const outstandingResult = await pool.query(
-      `SELECT COUNT(*) as count,
-              SUM(CASE WHEN due_date < CURRENT_DATE THEN 1 ELSE 0 END) as overdue
-       FROM invoices 
-       WHERE company_id = $1 AND status IN ('sent', 'overdue')`,
-      [req.companyId]
-    );
-
-    // Recent activity (last 10 transactions)
-    const recentInvoices = await pool.query(
-      `SELECT 'Invoice' as type, invoice_number as description, total_amount as amount, 
-              created_at, invoice_date as date
-       FROM invoices 
-       WHERE company_id = $1 
-       ORDER BY created_at DESC 
-       LIMIT 5`,
-      [req.companyId]
-    );
-
-    const recentExpenses = await pool.query(
-      `SELECT 'Expense' as type, description, amount, created_at, expense_date as date
-       FROM expenses 
-       WHERE company_id = $1 
-       ORDER BY created_at DESC 
-       LIMIT 5`,
-      [req.companyId]
-    );
-
-    const recentActivity = [...recentInvoices.rows, ...recentExpenses.rows]
-      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-      .slice(0, 10)
-      .map(activity => ({
-        date: activity.date,
-        description: activity.description,
-        type: activity.type,
-        amount: activity.type === 'Invoice' ? parseFloat(activity.amount) : -parseFloat(activity.amount)
-      }));
 
     res.json({
-      total_receivables: parseFloat(receivablesResult.rows[0].total),
-      current_receivables: parseFloat(receivablesResult.rows[0].current),
-      total_payables: parseFloat(payablesResult.rows[0].total),
-      overdue_payables: 0,
-      total_revenue: revenue,
-      total_expenses: expenses,
-      net_profit: netProfit,
-      outstanding_invoices: parseInt(outstandingResult.rows[0].count),
-      overdue_invoices: parseInt(outstandingResult.rows[0].overdue),
-      recent_activity: recentActivity
+      expenses: result.rows,
+      total: parseInt(countResult.rows[0].count),
+      page: parseInt(page),
+      per_page: parseInt(per_page),
     });
   } catch (error) {
-    res.status(500).json({ message: 'Error fetching dashboard stats', error: error.message });
+    res.status(500).json({ message: 'Error fetching expenses', error: error.message });
   }
 });
 
-// Get monthly trend data
-router.get('/monthly-trend', authMiddleware, async (req, res) => {
+// POST /expenses
+router.post('/', authMiddleware, async (req, res) => {
+  const { description, category, amount, expense_date, vendor_id, notes, tax_amount } = req.body;
+
+  if (!description || !category || !amount || !expense_date) {
+    return res.status(400).json({ message: 'Description, category, amount and date are required' });
+  }
+
   try {
-    const monthsData = [];
-    const currentDate = new Date();
+    // Auto-generate expense number
+    const countResult = await pool.query(
+      'SELECT COUNT(*) FROM expenses WHERE company_id = $1',
+      [req.companyId]
+    );
+    const count = parseInt(countResult.rows[0].count) + 1;
+    const expense_number = `EXP-${String(count).padStart(4, '0')}`;
 
-    for (let i = 11; i >= 0; i--) {
-      const monthStart = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
-      const monthEnd = new Date(currentDate.getFullYear(), currentDate.getMonth() - i + 1, 0);
+    const result = await pool.query(
+      `INSERT INTO expenses (company_id, vendor_id, expense_date, expense_number, description, category, amount, tax_amount, notes, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW()) RETURNING *`,
+      [req.companyId, vendor_id || null, expense_date, expense_number, description, category, amount, tax_amount || 0, notes || null]
+    );
 
-      const revenueResult = await pool.query(
-        `SELECT COALESCE(SUM(total_amount), 0) as total
-         FROM invoices 
-         WHERE company_id = $1 AND invoice_date >= $2 AND invoice_date <= $3`,
-        [req.companyId, monthStart, monthEnd]
-      );
-
-      const expensesResult = await pool.query(
-        `SELECT COALESCE(SUM(amount), 0) as total
-         FROM expenses 
-         WHERE company_id = $1 AND expense_date >= $2 AND expense_date <= $3`,
-        [req.companyId, monthStart, monthEnd]
-      );
-
-      const revenue = parseFloat(revenueResult.rows[0].total);
-      const expenses = parseFloat(expensesResult.rows[0].total);
-
-      monthsData.push({
-        month: monthStart.toLocaleString('default', { month: 'short', year: 'numeric' }),
-        revenue: revenue,
-        expenses: expenses,
-        profit: revenue - expenses
-      });
-    }
-
-    res.json({ months_data: monthsData });
+    res.status(201).json(result.rows[0]);
   } catch (error) {
-    res.status(500).json({ message: 'Error fetching monthly trend', error: error.message });
+    res.status(500).json({ message: 'Error creating expense', error: error.message });
+  }
+});
+
+// DELETE /expenses/:id
+router.delete('/:id', authMiddleware, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'DELETE FROM expenses WHERE id = $1 AND company_id = $2 RETURNING id',
+      [req.params.id, req.companyId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Expense not found' });
+    res.json({ message: 'Expense deleted' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error deleting expense', error: error.message });
   }
 });
 
