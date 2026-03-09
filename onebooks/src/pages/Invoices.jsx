@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Search, Download, Eye, Trash2, X } from 'lucide-react';
+import { Plus, Search, Download, Trash2, X } from 'lucide-react';
 import Header from '../components/Header';
 import { invoiceAPI, customerAPI, itemAPI } from '../services/api';
 import { formatCurrency, formatDate, downloadFile } from '../utils/helpers';
