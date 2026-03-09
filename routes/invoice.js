@@ -273,19 +273,60 @@ router.get('/:id/pdf', authMiddleware, async (req, res) => {
   }
 });
 
-// Update invoice status
+// Update invoice (status only OR full edit)
 router.put('/:id', authMiddleware, async (req, res) => {
-  const { status } = req.body;
+  const { status, customer_id, invoice_date, due_date, notes, items } = req.body;
 
+  // Status-only update
+  if (status && !items) {
+    const allowed = ['draft', 'sent', 'paid', 'overdue', 'unpaid'];
+    if (!allowed.includes(status)) {
+      return res.status(400).json({ message: 'Invalid status' });
+    }
+    try {
+      await pool.query(
+        `UPDATE invoices SET status = $1, updated_at = NOW() WHERE id = $2 AND company_id = $3`,
+        [status, req.params.id, req.companyId]
+      );
+      return res.json({ message: 'Status updated' });
+    } catch (error) {
+      return res.status(500).json({ message: 'Error updating status', error: error.message });
+    }
+  }
+
+  // Full invoice edit
+  const client = await pool.connect();
   try {
-    await pool.query(
-      `UPDATE invoices SET status = $1, updated_at = NOW() WHERE id = $2 AND company_id = $3`,
-      [status, req.params.id, req.companyId]
+    await client.query('BEGIN');
+
+    let subtotal = 0;
+    (items || []).forEach(item => { subtotal += item.quantity * item.unit_price; });
+    const total_amount = subtotal;
+
+    await client.query(
+      `UPDATE invoices SET customer_id=$1, invoice_date=$2, due_date=$3, notes=$4,
+       subtotal=$5, tax_amount=0, total_amount=$6, updated_at=NOW()
+       WHERE id=$7 AND company_id=$8`,
+      [customer_id, invoice_date, due_date, notes, subtotal, total_amount, req.params.id, req.companyId]
     );
 
+    // Replace line items
+    await client.query(`DELETE FROM invoice_items WHERE invoice_id = $1`, [req.params.id]);
+    for (const item of (items || [])) {
+      await client.query(
+        `INSERT INTO invoice_items (invoice_id, item_id, description, quantity, unit_price, line_total)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [req.params.id, item.item_id || null, item.description, item.quantity, item.unit_price, item.quantity * item.unit_price]
+      );
+    }
+
+    await client.query('COMMIT');
     res.json({ message: 'Invoice updated successfully' });
   } catch (error) {
+    await client.query('ROLLBACK');
     res.status(500).json({ message: 'Error updating invoice', error: error.message });
+  } finally {
+    client.release();
   }
 });
 
