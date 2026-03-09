@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { DollarSign, TrendingUp, FileText, AlertCircle } from 'lucide-react';
+import { DollarSign, TrendingUp, FileText, AlertCircle, BarChart2 } from 'lucide-react';
 import Header from '../components/Header';
 import StatCard from '../components/StatCard';
 import { dashboardAPI } from '../services/api';
@@ -94,7 +94,16 @@ const Dashboard = () => {
           </div>
         )}
 
-        <div className="stats-grid">
+        <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}>
+          <StatCard
+            title="Total Revenue"
+            value={formatCurrency(stats?.total_revenue || 0)}
+            change={`Expenses: ${formatCurrency(stats?.total_expenses || 0)}`}
+            changeType="positive"
+            icon={BarChart2}
+            color="linear-gradient(135deg, #8b5cf6, #7c3aed)"
+          />
+
           <StatCard
             title="Total Receivables"
             value={formatCurrency(stats?.total_receivables || 0)}

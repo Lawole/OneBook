@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Search, Download, Trash2, X, Edit2 } from 'lucide-react';
 import Header from '../components/Header';
 import { invoiceAPI, customerAPI, itemAPI } from '../services/api';
@@ -16,8 +16,21 @@ const emptyLine = { description: '', quantity: 1, unit_price: '' };
 
 const StatusBadge = ({ status, invoiceId, onChanged }) => {
   const [open, setOpen] = useState(false);
+  const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0 });
   const [updating, setUpdating] = useState(false);
+  const badgeRef = useRef(null);
   const current = STATUSES.find((s) => s.value === status) || STATUSES[0];
+
+  const handleOpen = () => {
+    if (badgeRef.current) {
+      const rect = badgeRef.current.getBoundingClientRect();
+      setDropdownPos({
+        top: rect.bottom + 6,
+        left: rect.left,
+      });
+    }
+    setOpen(!open);
+  };
 
   const update = async (newStatus) => {
     setOpen(false);
@@ -33,26 +46,28 @@ const StatusBadge = ({ status, invoiceId, onChanged }) => {
   };
 
   return (
-    <div style={{ position: 'relative', display: 'inline-block' }}>
+    <div style={{ display: 'inline-block' }}>
       <span
-        onClick={() => setOpen(!open)}
-        style={{ background: current.color + '20', color: current.color, padding: '3px 10px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: `1px solid ${current.color}40` }}
+        ref={badgeRef}
+        onClick={handleOpen}
+        style={{ background: current.color + '20', color: current.color, padding: '3px 10px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: `1px solid ${current.color}40`, whiteSpace: 'nowrap' }}
         title="Click to change status"
       >
         {updating ? '...' : current.label} ▾
       </span>
       {open && (
         <>
-          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
-          <div style={{ position: 'absolute', top: '110%', left: 0, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,0.12)', zIndex: 100, minWidth: 120, overflow: 'hidden' }}>
+          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 999 }} />
+          <div style={{ position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 30px rgba(0,0,0,0.15)', zIndex: 1000, minWidth: 130, overflow: 'hidden' }}>
             {STATUSES.map((s) => (
               <div
                 key={s.value}
                 onClick={() => update(s.value)}
-                style={{ padding: '8px 14px', cursor: 'pointer', fontSize: 13, color: s.color, fontWeight: 500, background: s.value === status ? s.color + '15' : 'transparent' }}
-                onMouseEnter={(e) => e.currentTarget.style.background = s.color + '15'}
-                onMouseLeave={(e) => e.currentTarget.style.background = s.value === status ? s.color + '15' : 'transparent'}
+                style={{ padding: '9px 16px', cursor: 'pointer', fontSize: 13, color: s.color, fontWeight: 600, background: s.value === status ? s.color + '18' : 'transparent', display: 'flex', alignItems: 'center', gap: 8 }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = s.color + '18'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = s.value === status ? s.color + '18' : 'transparent'; }}
               >
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
                 {s.label}
               </div>
             ))}
