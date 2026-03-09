@@ -116,9 +116,18 @@ export const vendorAPI = {
 
 export const reportAPI = {
   getProfitLoss: (params) => api.get('/reports/profit-loss', { params }),
-  exportProfitLoss: (format) => api.get(`/reports/profit-loss/export?format=${format}`, { responseType: 'blob' }),
-  exportBalanceSheet: (format) => api.get(`/reports/balance-sheet/export?format=${format}`, { responseType: 'blob' }),
-  exportCashFlow: (format) => api.get(`/reports/cash-flow/export?format=${format}`, { responseType: 'blob' }),
+  getBalanceSheet: () => api.get('/reports/balance-sheet'),
+  getCashFlow: (params) => api.get('/reports/cash-flow', { params }),
+  exportProfitLoss: (format, params) => api.get('/reports/profit-loss/export', { params: { format, ...params }, responseType: 'blob' }),
+  exportBalanceSheet: (format) => api.get('/reports/balance-sheet/export', { params: { format }, responseType: 'blob' }),
+  exportCashFlow: (format, params) => api.get('/reports/cash-flow/export', { params: { format, ...params }, responseType: 'blob' }),
+};
+
+export const creditNoteAPI = {
+  getAll: (params) => api.get('/credit-notes', { params }),
+  create: (data) => api.post('/credit-notes', data),
+  delete: (id) => api.delete(`/credit-notes/${id}`),
+  downloadPDF: (id) => api.get(`/credit-notes/${id}/pdf`, { responseType: 'blob' }),
 };
 
 export const bankingAPI = {

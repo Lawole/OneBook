@@ -211,6 +211,53 @@ router.get('/profit-loss/export', authMiddleware, async (req, res) => {
   }
 });
 
+// Balance Sheet - JSON view
+router.get('/balance-sheet', authMiddleware, async (req, res) => {
+  try {
+    const [inventoryR, receivablesR, revenueR, expensesR] = await Promise.all([
+      pool.query(`SELECT COALESCE(SUM(unit_price * quantity_on_hand), 0) as total FROM items WHERE company_id = $1`, [req.companyId]),
+      pool.query(`SELECT COALESCE(SUM(total_amount), 0) as total FROM invoices WHERE company_id = $1 AND status IN ('sent', 'overdue', 'unpaid')`, [req.companyId]),
+      pool.query(`SELECT COALESCE(SUM(total_amount), 0) as total FROM invoices WHERE company_id = $1 AND status = 'paid'`, [req.companyId]),
+      pool.query(`SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE company_id = $1`, [req.companyId]),
+    ]);
+    const inventory = parseFloat(inventoryR.rows[0].total);
+    const receivables = parseFloat(receivablesR.rows[0].total);
+    const retainedEarnings = parseFloat(revenueR.rows[0].total) - parseFloat(expensesR.rows[0].total);
+    const totalAssets = inventory + receivables;
+    res.json({
+      assets: { accounts_receivable: receivables, inventory, total: totalAssets },
+      liabilities: { accounts_payable: 0, total: 0 },
+      equity: { retained_earnings: retainedEarnings, total: retainedEarnings },
+      total_liabilities_and_equity: retainedEarnings,
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error generating balance sheet', error: error.message });
+  }
+});
+
+// Cash Flow - JSON view
+router.get('/cash-flow', authMiddleware, async (req, res) => {
+  const { start_date, end_date } = req.query;
+  try {
+    let cashInQ = `SELECT COALESCE(SUM(total_amount), 0) as total FROM invoices WHERE company_id = $1 AND status = 'paid'`;
+    let cashOutQ = `SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE company_id = $1`;
+    const params = [req.companyId];
+    if (start_date) { cashInQ += ` AND invoice_date >= $2`; cashOutQ += ` AND expense_date >= $2`; params.push(start_date); }
+    if (end_date) { const p = params.length + 1; cashInQ += ` AND invoice_date <= $${p}`; cashOutQ += ` AND expense_date <= $${p}`; params.push(end_date); }
+    const [cashInR, cashOutR] = await Promise.all([pool.query(cashInQ, params), pool.query(cashOutQ, params)]);
+    const cashIn = parseFloat(cashInR.rows[0].total);
+    const cashOut = parseFloat(cashOutR.rows[0].total);
+    res.json({
+      operating: { cash_from_customers: cashIn, cash_to_suppliers: cashOut, net: cashIn - cashOut },
+      investing: { net: 0 },
+      financing: { net: 0 },
+      net_change: cashIn - cashOut,
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error generating cash flow', error: error.message });
+  }
+});
+
 // Balance Sheet Export
 router.get('/balance-sheet/export', authMiddleware, async (req, res) => {
   const { format = 'excel', as_of_date } = req.query;
@@ -230,7 +277,7 @@ router.get('/balance-sheet/export', authMiddleware, async (req, res) => {
 
     // Liabilities & Equity
     const payablesResult = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE company_id = $1 WHERE category = 'accounts-payable'`,
+      `SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE company_id = $1 AND category = 'accounts-payable'`,
       [req.companyId]
     );
 

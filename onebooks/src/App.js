@@ -11,6 +11,7 @@ import Items from './pages/Items';
 import Vendors from './pages/Vendors';
 import Expenses from './pages/Expenses';
 import Reports from './pages/Reports';
+import CreditNotes from './pages/CreditNotes';
 import Banking from './pages/Banking';
 import './App.css';
 
@@ -69,9 +70,7 @@ const AppContent = () => {
               path="/credit-notes"
               element={
                 <PrivateRoute>
-                  <div className="page">
-                    <h1>Credit Notes - Coming Soon</h1>
-                  </div>
+                  <CreditNotes />
                 </PrivateRoute>
               }
             />

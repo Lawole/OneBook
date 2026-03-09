@@ -57,7 +57,26 @@ const ModalHeader = ({ title, onClose }) => (
 const AccountModal = ({ initial, onSave, onClose, saving, error }) => {
   const blank = { name: '', bank_name: '', account_number: '', account_type: 'checking', current_balance: '', currency_code: 'USD' };
   const [form, setForm] = useState(initial || blank);
+  const [balanceDisplay, setBalanceDisplay] = useState(() => {
+    const v = (initial || blank).current_balance;
+    return v ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
+  });
   const f = (field) => (e) => setForm({ ...form, [field]: e.target.value });
+
+  const handleBalanceChange = (e) => {
+    const raw = e.target.value.replace(/[^0-9.]/g, '');
+    setBalanceDisplay(raw);
+    setForm({ ...form, current_balance: raw });
+  };
+
+  const handleBalanceBlur = () => {
+    const num = parseFloat(form.current_balance) || 0;
+    setBalanceDisplay(num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+  };
+
+  const handleBalanceFocus = () => {
+    setBalanceDisplay(form.current_balance || '');
+  };
 
   return (
     <Overlay onClose={onClose}>
@@ -73,7 +92,22 @@ const AccountModal = ({ initial, onSave, onClose, saving, error }) => {
                 {ACCOUNT_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
             </div>
-            <div className="form-group"><label>Opening Balance</label><input className="form-control" type="number" step="0.01" value={form.current_balance} onChange={f('current_balance')} placeholder="0.00" /></div>
+            <div className="form-group">
+              <label>Opening Balance</label>
+              <input
+                className="form-control"
+                value={balanceDisplay}
+                onChange={handleBalanceChange}
+                onBlur={handleBalanceBlur}
+                onFocus={handleBalanceFocus}
+                placeholder="0.00"
+              />
+              <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>
+                {parseFloat(form.current_balance) > 0
+                  ? `= ${new Intl.NumberFormat('en-US', { style: 'currency', currency: form.currency_code || 'USD' }).format(parseFloat(form.current_balance) || 0)}`
+                  : 'e.g. 1,250,000.00'}
+              </div>
+            </div>
             <div className="form-group"><label>Currency</label><input className="form-control" value={form.currency_code} onChange={f('currency_code')} placeholder="USD" maxLength={5} /></div>
           </div>
           {error && <div style={{ background: '#fee2e2', color: '#991b1b', padding: '10px 14px', borderRadius: 8, marginBottom: 12, fontSize: 14 }}>{error}</div>}
