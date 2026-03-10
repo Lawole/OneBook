@@ -39,7 +39,7 @@ api.interceptors.response.use(
 
 export const authAPI = {
   login: (email, password) => api.post('/auth/login', { email, password }),
-  register: (companyName, email, password) => api.post('/auth/register', { company_name: companyName, email, password }),
+  register: (companyName, email, password, currency) => api.post('/auth/register', { company_name: companyName, email, password, base_currency: currency }),
 };
 
 export const dashboardAPI = {

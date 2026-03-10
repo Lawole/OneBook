@@ -3,12 +3,31 @@ import { useNavigate } from 'react-router-dom';
 import { authAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
+const CURRENCIES = [
+  { code: 'USD', label: 'US Dollar',          flag: '🇺🇸', symbol: '$'   },
+  { code: 'NGN', label: 'Nigerian Naira',     flag: '🇳🇬', symbol: '₦'   },
+  { code: 'EUR', label: 'Euro',               flag: '🇪🇺', symbol: '€'   },
+  { code: 'GBP', label: 'British Pound',      flag: '🇬🇧', symbol: '£'   },
+  { code: 'CAD', label: 'Canadian Dollar',    flag: '🇨🇦', symbol: 'CA$' },
+  { code: 'AUD', label: 'Australian Dollar',  flag: '🇦🇺', symbol: 'A$'  },
+  { code: 'JPY', label: 'Japanese Yen',       flag: '🇯🇵', symbol: '¥'   },
+  { code: 'CHF', label: 'Swiss Franc',        flag: '🇨🇭', symbol: 'CHF' },
+  { code: 'INR', label: 'Indian Rupee',       flag: '🇮🇳', symbol: '₹'   },
+  { code: 'CNY', label: 'Chinese Yuan',       flag: '🇨🇳', symbol: '¥'   },
+  { code: 'GHS', label: 'Ghanaian Cedi',      flag: '🇬🇭', symbol: '₵'   },
+  { code: 'ZAR', label: 'South African Rand', flag: '🇿🇦', symbol: 'R'   },
+  { code: 'KES', label: 'Kenyan Shilling',    flag: '🇰🇪', symbol: 'KSh' },
+  { code: 'AED', label: 'UAE Dirham',         flag: '🇦🇪', symbol: 'AED' },
+  { code: 'SAR', label: 'Saudi Riyal',        flag: '🇸🇦', symbol: 'SR'  },
+];
+
 const Login = () => {
   const [mode, setMode] = useState('login'); // 'login' | 'register'
   const [companyName, setCompanyName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [currency, setCurrency] = useState('USD');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [useDemoMode, setUseDemoMode] = useState(false);
@@ -21,6 +40,7 @@ const Login = () => {
     setEmail('');
     setPassword('');
     setConfirmPassword('');
+    setCurrency('USD');
   };
 
   const switchMode = (newMode) => {
@@ -58,7 +78,7 @@ const Login = () => {
           setLoading(false);
           return;
         }
-        const response = await authAPI.register(companyName, email, password);
+        const response = await authAPI.register(companyName, email, password, currency);
         login(response.data.company, response.data.token, false);
       } else {
         const response = await authAPI.login(email, password);
@@ -138,18 +158,40 @@ const Login = () => {
 
           <form onSubmit={handleSubmit} className="login-form-modern">
             {mode === 'register' && (
-              <div className="form-group-modern">
-                <label htmlFor="companyName">Company Name</label>
-                <input
-                  type="text"
-                  id="companyName"
-                  className="form-input-modern"
-                  placeholder="Your company name"
-                  value={companyName}
-                  onChange={(e) => setCompanyName(e.target.value)}
-                  required={!useDemoMode}
-                />
-              </div>
+              <>
+                <div className="form-group-modern">
+                  <label htmlFor="companyName">Company Name</label>
+                  <input
+                    type="text"
+                    id="companyName"
+                    className="form-input-modern"
+                    placeholder="Your company name"
+                    value={companyName}
+                    onChange={(e) => setCompanyName(e.target.value)}
+                    required={!useDemoMode}
+                  />
+                </div>
+                <div className="form-group-modern">
+                  <label htmlFor="currency">Base Currency</label>
+                  <select
+                    id="currency"
+                    className="form-input-modern"
+                    value={currency}
+                    onChange={(e) => setCurrency(e.target.value)}
+                    required={!useDemoMode}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    {CURRENCIES.map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {c.flag} {c.label} ({c.symbol})
+                      </option>
+                    ))}
+                  </select>
+                  <small style={{ color: '#6b7280', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                    This will be used for all invoices, reports, and financial data.
+                  </small>
+                </div>
+              </>
             )}
 
             <div className="form-group-modern">

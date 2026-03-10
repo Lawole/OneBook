@@ -8,9 +8,28 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const pool = require('../config/database');
 
+// Supported currencies for registration
+const CURRENCIES = {
+  USD: { name: 'US Dollar',           symbol: '$'   },
+  NGN: { name: 'Nigerian Naira',      symbol: '₦'   },
+  EUR: { name: 'Euro',                symbol: '€'   },
+  GBP: { name: 'British Pound',       symbol: '£'   },
+  CAD: { name: 'Canadian Dollar',     symbol: 'CA$' },
+  AUD: { name: 'Australian Dollar',   symbol: 'A$'  },
+  JPY: { name: 'Japanese Yen',        symbol: '¥'   },
+  CHF: { name: 'Swiss Franc',         symbol: 'CHF' },
+  INR: { name: 'Indian Rupee',        symbol: '₹'   },
+  CNY: { name: 'Chinese Yuan',        symbol: '¥'   },
+  GHS: { name: 'Ghanaian Cedi',       symbol: '₵'   },
+  ZAR: { name: 'South African Rand',  symbol: 'R'   },
+  KES: { name: 'Kenyan Shilling',     symbol: 'KSh' },
+  AED: { name: 'UAE Dirham',          symbol: 'AED' },
+  SAR: { name: 'Saudi Riyal',         symbol: 'SR'  },
+};
+
 // Register - Create a new account
 router.post('/register', async (req, res) => {
-  const { company_name, email, password } = req.body;
+  const { company_name, email, password, base_currency } = req.body;
 
   if (!company_name || !email || !password) {
     return res.status(400).json({ message: 'Company name, email and password are required' });
@@ -19,6 +38,9 @@ router.post('/register', async (req, res) => {
   if (password.length < 6) {
     return res.status(400).json({ message: 'Password must be at least 6 characters' });
   }
+
+  const currencyCode = (base_currency && CURRENCIES[base_currency]) ? base_currency : 'USD';
+  const currencyInfo = CURRENCIES[currencyCode];
 
   try {
     // Check if email already exists
@@ -32,15 +54,15 @@ router.post('/register', async (req, res) => {
     const result = await pool.query(
       `INSERT INTO companies (name, email, password_hash, base_currency, created_at, updated_at)
        VALUES ($1, $2, $3, $4, NOW(), NOW()) RETURNING *`,
-      [company_name, email, password_hash, 'USD']
+      [company_name, email, password_hash, currencyCode]
     );
     const company = result.rows[0];
 
-    // Create default USD currency for the company
+    // Create base currency entry for the company
     await pool.query(
       `INSERT INTO currencies (company_id, code, name, symbol, exchange_rate, is_base, created_at)
-       VALUES ($1, 'USD', 'US Dollar', '$', 1.0000, true, NOW())`,
-      [company.id]
+       VALUES ($1, $2, $3, $4, 1.0000, true, NOW())`,
+      [company.id, currencyCode, currencyInfo.name, currencyInfo.symbol]
     );
 
     const token = jwt.sign(
