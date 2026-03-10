@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Search, Trash2, X, Edit2, AlertTriangle } from 'lucide-react';
 import Header from '../components/Header';
 import { itemAPI } from '../services/api';
-import { formatCurrency } from '../utils/helpers';
+import useCurrency from '../hooks/useCurrency';
 
 const blank = { name: '', description: '', sku: '', category: '', unit_price: '', quantity_on_hand: '0', reorder_level: '0' };
 
@@ -30,6 +30,7 @@ const ItemForm = ({ initial, onSave, onCancel, saving, error }) => {
 };
 
 const Items = () => {
+  const { fmt } = useCurrency();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -116,7 +117,7 @@ const Items = () => {
                       </td>
                       <td><span style={{ fontFamily: 'monospace', fontSize: 13, color: '#64748b' }}>{item.sku || '—'}</span></td>
                       <td>{item.category ? <span className="badge badge-secondary">{item.category}</span> : '—'}</td>
-                      <td style={{ fontWeight: 600 }}>{formatCurrency(item.unit_price)}</td>
+                      <td style={{ fontWeight: 600 }}>{fmt(item.unit_price)}</td>
                       <td>
                         <span style={{ fontWeight: 600, color: isLow ? '#ef4444' : '#10b981', display: 'flex', alignItems: 'center', gap: 4 }}>
                           {isLow && <AlertTriangle size={14} />}{item.quantity_on_hand}

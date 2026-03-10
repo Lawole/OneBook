@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Search, Trash2, X, Edit2 } from 'lucide-react';
 import Header from '../components/Header';
 import { expenseAPI } from '../services/api';
-import { formatCurrency, formatDate } from '../utils/helpers';
+import { formatDate } from '../utils/helpers';
+import useCurrency from '../hooks/useCurrency';
 
 const CATEGORIES = [
   { value: 'office-supplies', label: 'Office Supplies' },
@@ -60,6 +61,7 @@ const ExpenseForm = ({ initial, onSave, onCancel, saving, error }) => {
 };
 
 const Expenses = () => {
+  const { fmt } = useCurrency();
   const [expenses, setExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -173,7 +175,7 @@ const Expenses = () => {
                     </td>
                     <td><span className="badge badge-secondary">{getCategoryLabel(exp.category)}</span></td>
                     <td style={{ color: '#64748b' }}>{exp.vendor_name || '—'}</td>
-                    <td style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{formatCurrency(exp.amount)}</td>
+                    <td style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{fmt(exp.amount)}</td>
                     <td className="text-right" style={{ whiteSpace: 'nowrap' }}>
                       <button className="btn-icon" onClick={() => openEdit(exp)} title="Edit"><Edit2 size={16} /></button>
                       <button className="btn-icon text-danger" onClick={() => handleDelete(exp.id)} title="Delete"><Trash2 size={16} /></button>
@@ -197,7 +199,7 @@ const Expenses = () => {
             <div style={{ padding: '14px 24px', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc' }}>
               <span style={{ fontSize: 13, color: '#64748b' }}>{expenses.length} expense{expenses.length !== 1 ? 's' : ''}</span>
               <span style={{ fontWeight: 700, color: '#1e293b' }}>
-                Total: {formatCurrency(expenses.reduce((s, e) => s + parseFloat(e.amount || 0), 0))}
+                Total: {fmt(expenses.reduce((s, e) => s + parseFloat(e.amount || 0), 0))}
               </span>
             </div>
           )}

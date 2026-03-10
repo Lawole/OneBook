@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Search, Trash2, X, Edit2 } from 'lucide-react';
 import Header from '../components/Header';
 import { customerAPI } from '../services/api';
-import { formatCurrency } from '../utils/helpers';
+import useCurrency from '../hooks/useCurrency';
 
 const blank = { name: '', email: '', company_name: '', phone: '', address: '' };
 
@@ -26,6 +26,7 @@ const CustomerForm = ({ initial, onSave, onCancel, saving, error }) => {
 };
 
 const Customers = () => {
+  const { fmt } = useCurrency();
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -110,7 +111,7 @@ const Customers = () => {
                     </td>
                     <td style={{ color: '#64748b' }}>{c.email}</td>
                     <td style={{ color: '#64748b', whiteSpace: 'nowrap' }}>{c.phone || '—'}</td>
-                    <td style={{ fontWeight: 600 }}>{formatCurrency(c.total_invoiced || 0)}</td>
+                    <td style={{ fontWeight: 600 }}>{fmt(c.total_invoiced || 0)}</td>
                     <td className="text-right" style={{ whiteSpace: 'nowrap' }}>
                       <button className="btn-icon" onClick={() => openEdit(c)} title="Edit"><Edit2 size={16} /></button>
                       <button className="btn-icon text-danger" onClick={() => handleDelete(c.id)} title="Delete"><Trash2 size={16} /></button>

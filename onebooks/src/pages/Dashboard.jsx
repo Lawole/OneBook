@@ -4,13 +4,15 @@ import { DollarSign, TrendingUp, FileText, AlertCircle, BarChart2 } from 'lucide
 import Header from '../components/Header';
 import StatCard from '../components/StatCard';
 import { dashboardAPI } from '../services/api';
-import { formatCurrency, formatDate } from '../utils/helpers';
+import { formatDate } from '../utils/helpers';
+import useCurrency from '../hooks/useCurrency';
 
 const Dashboard = () => {
   const [stats, setStats] = useState(null);
   const [chartData, setChartData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [demoMode, setDemoMode] = useState(false);
+  const { fmt } = useCurrency();
 
   useEffect(() => {
     fetchDashboardData();
@@ -97,8 +99,8 @@ const Dashboard = () => {
         <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}>
           <StatCard
             title="Total Revenue"
-            value={formatCurrency(stats?.total_revenue || 0)}
-            change={`Expenses: ${formatCurrency(stats?.total_expenses || 0)}`}
+            value={fmt(stats?.total_revenue || 0)}
+            change={`Expenses: ${fmt(stats?.total_expenses || 0)}`}
             changeType="positive"
             icon={BarChart2}
             color="linear-gradient(135deg, #8b5cf6, #7c3aed)"
@@ -106,8 +108,8 @@ const Dashboard = () => {
 
           <StatCard
             title="Total Receivables"
-            value={formatCurrency(stats?.total_receivables || 0)}
-            change={`Current: ${formatCurrency(stats?.current_receivables || 0)}`}
+            value={fmt(stats?.total_receivables || 0)}
+            change={`Current: ${fmt(stats?.current_receivables || 0)}`}
             changeType="positive"
             icon={DollarSign}
             color="linear-gradient(135deg, #10b981, #059669)"
@@ -115,8 +117,8 @@ const Dashboard = () => {
 
           <StatCard
             title="Total Payables"
-            value={formatCurrency(stats?.total_payables || 0)}
-            change={`Overdue: ${formatCurrency(stats?.overdue_payables || 0)}`}
+            value={fmt(stats?.total_payables || 0)}
+            change={`Overdue: ${fmt(stats?.overdue_payables || 0)}`}
             changeType="negative"
             icon={AlertCircle}
             color="linear-gradient(135deg, #ef4444, #dc2626)"
@@ -124,7 +126,7 @@ const Dashboard = () => {
 
           <StatCard
             title="Net Profit"
-            value={formatCurrency(stats?.net_profit || 0)}
+            value={fmt(stats?.net_profit || 0)}
             change="This fiscal year"
             changeType={stats?.net_profit >= 0 ? 'positive' : 'negative'}
             icon={TrendingUp}
@@ -151,7 +153,7 @@ const Dashboard = () => {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="month" />
                 <YAxis />
-                <Tooltip formatter={(value) => formatCurrency(value)} />
+                <Tooltip formatter={(value) => fmt(value)} />
                 <Legend />
                 <Line 
                   type="monotone" 
@@ -194,7 +196,7 @@ const Dashboard = () => {
                       <td>{activity.description}</td>
                       <td>{activity.type}</td>
                       <td className={`text-right ${activity.amount >= 0 ? 'text-success' : 'text-danger'}`}>
-                        {activity.amount >= 0 ? '+' : ''}{formatCurrency(Math.abs(activity.amount))}
+                        {activity.amount >= 0 ? '+' : ''}{fmt(Math.abs(activity.amount))}
                       </td>
                     </tr>
                   ))

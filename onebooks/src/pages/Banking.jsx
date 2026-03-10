@@ -2,9 +2,9 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Upload, X, Edit2, Trash2, CheckCircle, Link, Ban, RefreshCw, Building2, ChevronRight } from 'lucide-react';
 import Header from '../components/Header';
 import { bankingAPI } from '../services/api';
+import useCurrency from '../hooks/useCurrency';
 
 // ── helpers ────────────────────────────────────────────────────
-const fmt = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Math.abs(n));
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 
 const ACCOUNT_TYPES = [
@@ -179,7 +179,7 @@ const ImportModal = ({ account, onImported, onClose }) => {
 };
 
 // ── Match Modal ────────────────────────────────────────────────
-const MatchModal = ({ transaction, onMatched, onClose }) => {
+const MatchModal = ({ transaction, onMatched, onClose, fmt }) => {
   const [suggestions, setSuggestions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(null);
@@ -272,6 +272,8 @@ const MatchModal = ({ transaction, onMatched, onClose }) => {
 
 // ── Main Banking Page ──────────────────────────────────────────
 const Banking = () => {
+  const { fmt: fmtRaw } = useCurrency();
+  const fmt = (n) => fmtRaw(Math.abs(n));
   const [accounts, setAccounts] = useState([]);
   const [selectedAccount, setSelectedAccount] = useState(null);
   const [transactions, setTransactions] = useState([]);
@@ -547,7 +549,7 @@ const Banking = () => {
         <ImportModal account={selectedAccount} onImported={() => { fetchAccounts(); fetchTransactions(); }} onClose={() => setModal(null)} />
       )}
       {modal === 'match' && matchTxn && (
-        <MatchModal transaction={matchTxn} onMatched={() => { setModal(null); fetchTransactions(); }} onClose={() => setModal(null)} />
+        <MatchModal transaction={matchTxn} onMatched={() => { setModal(null); fetchTransactions(); }} onClose={() => setModal(null)} fmt={fmt} />
       )}
     </div>
   );

@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Search, Download, Trash2, X } from 'lucide-react';
 import Header from '../components/Header';
 import { creditNoteAPI, customerAPI, invoiceAPI } from '../services/api';
-import { formatCurrency, formatDate, downloadFile } from '../utils/helpers';
+import { formatDate, downloadFile } from '../utils/helpers';
+import useCurrency from '../hooks/useCurrency';
 
 const STATUS_COLORS = {
   draft:  { bg: '#f1f5f9', color: '#475569' },
@@ -22,7 +23,7 @@ const StatusBadge = ({ status }) => {
 
 const blankItem = () => ({ description: '', quantity: 1, unit_price: '' });
 
-const CreditNoteForm = ({ onSave, onCancel, saving, error }) => {
+const CreditNoteForm = ({ onSave, onCancel, saving, error, fmt }) => {
   const [customers, setCustomers] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [form, setForm] = useState({
@@ -98,7 +99,7 @@ const CreditNoteForm = ({ onSave, onCancel, saving, error }) => {
               <label>Related Invoice (optional)</label>
               <select className="form-control" value={form.invoice_id} onChange={setField('invoice_id')}>
                 <option value="">None</option>
-                {invoices.map(inv => <option key={inv.id} value={inv.id}>{inv.invoice_number} — {formatCurrency(inv.total_amount)}</option>)}
+                {invoices.map(inv => <option key={inv.id} value={inv.id}>{inv.invoice_number} — {fmt(inv.total_amount)}</option>)}
               </select>
             </div>
             <div className="form-group">
@@ -140,17 +141,17 @@ const CreditNoteForm = ({ onSave, onCancel, saving, error }) => {
           <div style={{ background: '#f8fafc', borderRadius: 10, padding: '14px 18px', marginBottom: 16 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 14 }}>
               <span style={{ color: '#64748b' }}>Subtotal</span>
-              <span style={{ fontWeight: 500 }}>{formatCurrency(subtotal)}</span>
+              <span style={{ fontWeight: 500 }}>{fmt(subtotal)}</span>
             </div>
             {tax > 0 && (
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 14 }}>
                 <span style={{ color: '#64748b' }}>Tax ({form.tax_rate}%)</span>
-                <span style={{ fontWeight: 500 }}>{formatCurrency(tax)}</span>
+                <span style={{ fontWeight: 500 }}>{fmt(tax)}</span>
               </div>
             )}
             <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #e2e8f0', paddingTop: 8, fontSize: 15 }}>
               <span style={{ fontWeight: 700 }}>Total Credit</span>
-              <span style={{ fontWeight: 700, color: '#4f46e5' }}>{formatCurrency(total)}</span>
+              <span style={{ fontWeight: 700, color: '#4f46e5' }}>{fmt(total)}</span>
             </div>
           </div>
 
@@ -166,6 +167,7 @@ const CreditNoteForm = ({ onSave, onCancel, saving, error }) => {
 };
 
 const CreditNotes = () => {
+  const { fmt } = useCurrency();
   const [creditNotes, setCreditNotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -267,7 +269,7 @@ const CreditNotes = () => {
                       <td>{cn.customer_name}</td>
                       <td>{cn.invoice_number || <span style={{ color: '#94a3b8' }}>—</span>}</td>
                       <td>{cn.credit_date ? formatDate(cn.credit_date) : '—'}</td>
-                      <td style={{ fontWeight: 600 }}>{formatCurrency(cn.total_amount)}</td>
+                      <td style={{ fontWeight: 600 }}>{fmt(cn.total_amount)}</td>
                       <td><StatusBadge status={cn.status} /></td>
                       <td>
                         <div style={{ display: 'flex', gap: 8 }}>
@@ -291,14 +293,14 @@ const CreditNotes = () => {
           {!loading && filtered.length > 0 && (
             <div style={{ padding: '12px 20px', borderTop: '1px solid #f1f5f9', fontSize: 13, color: '#64748b', display: 'flex', justifyContent: 'space-between' }}>
               <span>{filtered.length} credit note{filtered.length !== 1 ? 's' : ''}</span>
-              <span style={{ fontWeight: 600 }}>Total: {formatCurrency(filtered.reduce((s, cn) => s + (cn.total_amount || 0), 0))}</span>
+              <span style={{ fontWeight: 600 }}>Total: {fmt(filtered.reduce((s, cn) => s + (cn.total_amount || 0), 0))}</span>
             </div>
           )}
         </div>
       </div>
 
       {showModal && (
-        <CreditNoteForm onSave={handleCreate} onCancel={() => setShowModal(false)} saving={saving} error={saveError} />
+        <CreditNoteForm onSave={handleCreate} onCancel={() => setShowModal(false)} saving={saving} error={saveError} fmt={fmt} />
       )}
     </div>
   );

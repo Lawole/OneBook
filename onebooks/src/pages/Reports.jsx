@@ -2,9 +2,8 @@ import React, { useState, useCallback } from 'react';
 import { Download, TrendingUp, BarChart2, Activity } from 'lucide-react';
 import Header from '../components/Header';
 import { reportAPI } from '../services/api';
-import { formatCurrency, downloadFile } from '../utils/helpers';
-
-const fmt = (n) => formatCurrency(n || 0);
+import { downloadFile } from '../utils/helpers';
+import useCurrency from '../hooks/useCurrency';
 
 const SectionTitle = ({ children }) => (
   <div style={{ fontWeight: 700, fontSize: 13, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', padding: '14px 0 6px' }}>
@@ -12,7 +11,7 @@ const SectionTitle = ({ children }) => (
   </div>
 );
 
-const Row = ({ label, value, bold, color, indent }) => (
+const Row = ({ label, value, bold, color, indent, fmt }) => (
   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: '1px solid #f1f5f9', paddingLeft: indent ? 20 : 0 }}>
     <span style={{ fontWeight: bold ? 700 : 400, color: color || '#334155', fontSize: 14 }}>{label}</span>
     <span style={{ fontWeight: bold ? 700 : 500, color: color || (value < 0 ? '#ef4444' : '#1e293b'), fontSize: 14 }}>
@@ -27,7 +26,7 @@ const EmptyState = () => (
   </div>
 );
 
-const ProfitLossReport = ({ data, dates }) => (
+const ProfitLossReport = ({ data, dates, fmt }) => (
   <div>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
       <div>
@@ -45,39 +44,39 @@ const ProfitLossReport = ({ data, dates }) => (
       </div>
     </div>
     <SectionTitle>Income</SectionTitle>
-    <Row label="Revenue (Paid Invoices)" value={data.total_revenue} />
-    <Row label="Total Income" value={data.total_revenue} bold />
+    <Row fmt={fmt} label="Revenue (Paid Invoices)" value={data.total_revenue} />
+    <Row fmt={fmt} label="Total Income" value={data.total_revenue} bold />
     <SectionTitle>Expenses</SectionTitle>
     {(data.expense_breakdown || []).map((item, i) => (
-      <Row key={i} label={item.category.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())} value={item.amount} indent />
+      <Row fmt={fmt} key={i} label={item.category.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())} value={item.amount} indent />
     ))}
-    <Row label="Total Expenses" value={data.total_expenses} bold />
+    <Row fmt={fmt} label="Total Expenses" value={data.total_expenses} bold />
     <div style={{ marginTop: 16, borderTop: '2px solid #e2e8f0', paddingTop: 12 }}>
-      <Row label="NET PROFIT" value={data.net_profit} bold color={data.net_profit >= 0 ? '#16a34a' : '#dc2626'} />
+      <Row fmt={fmt} label="NET PROFIT" value={data.net_profit} bold color={data.net_profit >= 0 ? '#16a34a' : '#dc2626'} />
     </div>
   </div>
 );
 
-const BalanceSheetReport = ({ data }) => (
+const BalanceSheetReport = ({ data, fmt }) => (
   <div>
     <div style={{ fontWeight: 700, fontSize: 18, color: '#1e293b', marginBottom: 20 }}>Balance Sheet</div>
     <SectionTitle>Assets</SectionTitle>
-    <Row label="Accounts Receivable" value={data.assets.accounts_receivable} indent />
-    <Row label="Inventory" value={data.assets.inventory} indent />
-    <Row label="Total Assets" value={data.assets.total} bold />
+    <Row fmt={fmt} label="Accounts Receivable" value={data.assets.accounts_receivable} indent />
+    <Row fmt={fmt} label="Inventory" value={data.assets.inventory} indent />
+    <Row fmt={fmt} label="Total Assets" value={data.assets.total} bold />
     <SectionTitle>Liabilities</SectionTitle>
-    <Row label="Accounts Payable" value={data.liabilities.accounts_payable} indent />
-    <Row label="Total Liabilities" value={data.liabilities.total} bold />
+    <Row fmt={fmt} label="Accounts Payable" value={data.liabilities.accounts_payable} indent />
+    <Row fmt={fmt} label="Total Liabilities" value={data.liabilities.total} bold />
     <SectionTitle>Equity</SectionTitle>
-    <Row label="Retained Earnings" value={data.equity.retained_earnings} indent />
-    <Row label="Total Equity" value={data.equity.total} bold />
+    <Row fmt={fmt} label="Retained Earnings" value={data.equity.retained_earnings} indent />
+    <Row fmt={fmt} label="Total Equity" value={data.equity.total} bold />
     <div style={{ marginTop: 16, borderTop: '2px solid #e2e8f0', paddingTop: 12 }}>
-      <Row label="TOTAL LIABILITIES & EQUITY" value={data.liabilities.total + data.equity.total} bold />
+      <Row fmt={fmt} label="TOTAL LIABILITIES & EQUITY" value={data.liabilities.total + data.equity.total} bold />
     </div>
   </div>
 );
 
-const CashFlowReport = ({ data, dates }) => (
+const CashFlowReport = ({ data, dates, fmt }) => (
   <div>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
       <div>
@@ -88,15 +87,15 @@ const CashFlowReport = ({ data, dates }) => (
       </div>
     </div>
     <SectionTitle>Operating Activities</SectionTitle>
-    <Row label="Cash Received from Customers" value={data.operating.cash_from_customers} indent />
-    <Row label="Cash Paid to Suppliers" value={-data.operating.cash_to_suppliers} indent />
-    <Row label="Net Cash from Operating" value={data.operating.net} bold />
+    <Row fmt={fmt} label="Cash Received from Customers" value={data.operating.cash_from_customers} indent />
+    <Row fmt={fmt} label="Cash Paid to Suppliers" value={-data.operating.cash_to_suppliers} indent />
+    <Row fmt={fmt} label="Net Cash from Operating" value={data.operating.net} bold />
     <SectionTitle>Investing Activities</SectionTitle>
-    <Row label="Net Cash from Investing" value={data.investing.net} bold />
+    <Row fmt={fmt} label="Net Cash from Investing" value={data.investing.net} bold />
     <SectionTitle>Financing Activities</SectionTitle>
-    <Row label="Net Cash from Financing" value={data.financing.net} bold />
+    <Row fmt={fmt} label="Net Cash from Financing" value={data.financing.net} bold />
     <div style={{ marginTop: 16, borderTop: '2px solid #e2e8f0', paddingTop: 12 }}>
-      <Row label="NET CHANGE IN CASH" value={data.net_change} bold color={data.net_change >= 0 ? '#16a34a' : '#dc2626'} />
+      <Row fmt={fmt} label="NET CHANGE IN CASH" value={data.net_change} bold color={data.net_change >= 0 ? '#16a34a' : '#dc2626'} />
     </div>
   </div>
 );
@@ -108,6 +107,7 @@ const REPORT_TYPES = [
 ];
 
 const Reports = () => {
+  const { fmt } = useCurrency();
   const [reportType, setReportType] = useState('profit-loss');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -211,13 +211,13 @@ const Reports = () => {
               <div style={{ textAlign: 'center', padding: '48px 0', color: '#94a3b8', fontSize: 15 }}>Generating report...</div>
             )}
             {data && reportType === 'profit-loss' && (
-              <ProfitLossReport data={data} dates={{ start: startDate, end: endDate }} />
+              <ProfitLossReport data={data} dates={{ start: startDate, end: endDate }} fmt={fmt} />
             )}
             {data && reportType === 'balance-sheet' && (
-              <BalanceSheetReport data={data} />
+              <BalanceSheetReport data={data} fmt={fmt} />
             )}
             {data && reportType === 'cash-flow' && (
-              <CashFlowReport data={data} dates={{ start: startDate, end: endDate }} />
+              <CashFlowReport data={data} dates={{ start: startDate, end: endDate }} fmt={fmt} />
             )}
           </div>
         </div>

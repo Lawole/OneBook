@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Search, Download, Trash2, X, Edit2 } from 'lucide-react';
 import Header from '../components/Header';
 import { invoiceAPI, customerAPI, itemAPI } from '../services/api';
-import { formatCurrency, formatDate, downloadFile } from '../utils/helpers';
+import { formatDate, downloadFile } from '../utils/helpers';
+import useCurrency from '../hooks/useCurrency';
 
 const STATUSES = [
   { value: 'draft',   label: 'Draft',   color: '#6b7280' },
@@ -78,7 +79,7 @@ const StatusBadge = ({ status, invoiceId, onChanged }) => {
   );
 };
 
-const InvoiceForm = ({ initial, customers, items, onSave, onCancel, saving, error }) => {
+const InvoiceForm = ({ initial, customers, items, fmt, onSave, onCancel, saving, error }) => {
   const [form, setForm] = useState(initial);
   const subtotal = form.lines.reduce((s, l) => s + (parseFloat(l.quantity) || 0) * (parseFloat(l.unit_price) || 0), 0);
 
@@ -136,7 +137,7 @@ const InvoiceForm = ({ initial, customers, items, onSave, onCancel, saving, erro
         <button type="button" className="btn btn-outline" style={{ marginTop: 4 }} onClick={() => setForm({ ...form, lines: [...form.lines, { ...emptyLine }] })}>+ Add Line</button>
       </div>
 
-      <div style={{ textAlign: 'right', fontWeight: 600, marginBottom: 12 }}>Subtotal: {formatCurrency(subtotal)}</div>
+      <div style={{ textAlign: 'right', fontWeight: 600, marginBottom: 12 }}>Subtotal: {fmt(subtotal)}</div>
 
       <div className="form-group">
         <label>Notes</label>
@@ -153,6 +154,7 @@ const InvoiceForm = ({ initial, customers, items, onSave, onCancel, saving, erro
 };
 
 const Invoices = () => {
+  const { fmt } = useCurrency();
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -289,7 +291,7 @@ const Invoices = () => {
                     <td>{inv.customer_name}</td>
                     <td>{formatDate(inv.invoice_date)}</td>
                     <td>{formatDate(inv.due_date)}</td>
-                    <td>{formatCurrency(inv.total_amount)}</td>
+                    <td>{fmt(inv.total_amount)}</td>
                     <td>
                       <StatusBadge status={inv.status} invoiceId={inv.id} onChanged={fetchInvoices} />
                     </td>
@@ -316,7 +318,7 @@ const Invoices = () => {
               <h3 style={{ margin: 0 }}>New Invoice</h3>
               <button onClick={closeModal} style={closeBtn}><X size={20} /></button>
             </div>
-            <InvoiceForm initial={blankForm} customers={customers} items={items} onSave={handleCreate} onCancel={closeModal} saving={saving} error={error} />
+            <InvoiceForm initial={blankForm} customers={customers} items={items} fmt={fmt} onSave={handleCreate} onCancel={closeModal} saving={saving} error={error} />
           </div>
         </div>
       )}
@@ -329,7 +331,7 @@ const Invoices = () => {
               <h3 style={{ margin: 0 }}>Edit Invoice</h3>
               <button onClick={closeModal} style={closeBtn}><X size={20} /></button>
             </div>
-            <InvoiceForm initial={editInvoice} customers={customers} items={items} onSave={handleEdit} onCancel={closeModal} saving={saving} error={error} />
+            <InvoiceForm initial={editInvoice} customers={customers} items={items} fmt={fmt} onSave={handleEdit} onCancel={closeModal} saving={saving} error={error} />
           </div>
         </div>
       )}
