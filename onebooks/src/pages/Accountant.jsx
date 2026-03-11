@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  Plus, Trash2, Edit2, X, BookOpen, PenLine, BarChart2, RefreshCw, Layers, CheckCircle, AlertCircle,
+  Plus, Trash2, Edit2, X, BookOpen, PenLine, BarChart2, RefreshCw, Layers, CheckCircle,
 } from 'lucide-react';
 import Header from '../components/Header';
 import { accountAPI, journalAPI, budgetAPI, fxAPI, bulkAPI } from '../services/api';
@@ -40,7 +40,7 @@ const overlayStyle = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)
 const modalStyle = { background: '#fff', borderRadius: 12, padding: 28, width: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' };
 const modalHeader = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 };
 const closeBtn = { background: 'none', border: 'none', cursor: 'pointer', color: '#666', padding: 4 };
-const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; // eslint-disable-line no-unused-vars
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Chart of Accounts Tab

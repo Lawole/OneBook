@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { Download, TrendingUp, BarChart2, Activity, Users, Package, BookOpen } from 'lucide-react';
 import Header from '../components/Header';
 import { reportAPI } from '../services/api';
-import { downloadFile, formatCurrency } from '../utils/helpers';
+import { downloadFile } from '../utils/helpers';
 import useCurrency from '../hooks/useCurrency';
 import {
   mockSalesByCustomer,
