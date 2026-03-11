@@ -118,9 +118,70 @@ export const reportAPI = {
   getProfitLoss: (params) => api.get('/reports/profit-loss', { params }),
   getBalanceSheet: () => api.get('/reports/balance-sheet'),
   getCashFlow: (params) => api.get('/reports/cash-flow', { params }),
+  getSalesByCustomer: (params) => {
+    if (isDemoMode()) return Promise.reject(new Error('Demo mode'));
+    return api.get('/reports/sales-by-customer', { params });
+  },
+  getSalesByItem: (params) => {
+    if (isDemoMode()) return Promise.reject(new Error('Demo mode'));
+    return api.get('/reports/sales-by-item', { params });
+  },
+  getTrialBalance: (params) => {
+    if (isDemoMode()) return Promise.reject(new Error('Demo mode'));
+    return api.get('/reports/trial-balance', { params });
+  },
   exportProfitLoss: (format, params) => api.get('/reports/profit-loss/export', { params: { format, ...params }, responseType: 'blob' }),
   exportBalanceSheet: (format) => api.get('/reports/balance-sheet/export', { params: { format }, responseType: 'blob' }),
   exportCashFlow: (format, params) => api.get('/reports/cash-flow/export', { params: { format, ...params }, responseType: 'blob' }),
+};
+
+export const accountAPI = {
+  getAll: () => {
+    if (isDemoMode()) return Promise.reject(new Error('Demo mode'));
+    return api.get('/accountant/accounts');
+  },
+  create: (data) => api.post('/accountant/accounts', data),
+  update: (id, data) => api.put(`/accountant/accounts/${id}`, data),
+  delete: (id) => api.delete(`/accountant/accounts/${id}`),
+};
+
+export const journalAPI = {
+  getAll: () => {
+    if (isDemoMode()) return Promise.reject(new Error('Demo mode'));
+    return api.get('/accountant/journals');
+  },
+  create: (data) => api.post('/accountant/journals', data),
+  update: (id, data) => api.put(`/accountant/journals/${id}`, data),
+  post: (id) => api.post(`/accountant/journals/${id}/post`),
+  delete: (id) => api.delete(`/accountant/journals/${id}`),
+};
+
+export const budgetAPI = {
+  getAll: () => {
+    if (isDemoMode()) return Promise.reject(new Error('Demo mode'));
+    return api.get('/accountant/budgets');
+  },
+  create: (data) => api.post('/accountant/budgets', data),
+  update: (id, data) => api.put(`/accountant/budgets/${id}`, data),
+  delete: (id) => api.delete(`/accountant/budgets/${id}`),
+};
+
+export const fxAPI = {
+  getAll: () => {
+    if (isDemoMode()) return Promise.reject(new Error('Demo mode'));
+    return api.get('/accountant/fx-adjustments');
+  },
+  create: (data) => api.post('/accountant/fx-adjustments', data),
+  update: (id, data) => api.put(`/accountant/fx-adjustments/${id}`, data),
+  delete: (id) => api.delete(`/accountant/fx-adjustments/${id}`),
+};
+
+export const bulkAPI = {
+  getRecords: (type, params) => {
+    if (isDemoMode()) return Promise.reject(new Error('Demo mode'));
+    return api.get(`/bulk/${type}`, { params });
+  },
+  applyBulk: (type, ids, action, value) => api.post('/bulk/apply', { type, ids, action, value }),
 };
 
 export const creditNoteAPI = {

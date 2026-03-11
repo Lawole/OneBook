@@ -13,6 +13,7 @@ import Expenses from './pages/Expenses';
 import Reports from './pages/Reports';
 import CreditNotes from './pages/CreditNotes';
 import Banking from './pages/Banking';
+import Accountant from './pages/Accountant';
 import './App.css';
 
 const PrivateRoute = ({ children }) => {
@@ -107,6 +108,7 @@ const AppContent = () => {
               }
             />
             <Route path="/banking" element={<PrivateRoute><Banking /></PrivateRoute>} />
+            <Route path="/accountant/*" element={<PrivateRoute><Accountant /></PrivateRoute>} />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </div>

@@ -12,6 +12,7 @@ import {
   ChevronDown,
   ChevronRight,
   Landmark,
+  Calculator,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -21,6 +22,7 @@ const Sidebar = () => {
   const [salesOpen, setSalesOpen] = useState(true);
   const [purchasesOpen, setPurchasesOpen] = useState(false);
   const [reportsOpen, setReportsOpen] = useState(false);
+  const [accountantOpen, setAccountantOpen] = useState(false);
 
   const menuItems = [
     { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -51,12 +53,28 @@ const Sidebar = () => {
       label: 'Reports',
       icon: FileText,
       submenu: [
-        { path: '/reports/profit-loss', label: 'Profit & Loss' },
-        { path: '/reports/balance-sheet', label: 'Balance Sheet' },
-        { path: '/reports/cash-flow', label: 'Cash Flow' },
+        { path: '/reports/profit-loss',       label: 'Profit & Loss'      },
+        { path: '/reports/balance-sheet',     label: 'Balance Sheet'      },
+        { path: '/reports/cash-flow',         label: 'Cash Flow'          },
+        { path: '/reports/sales-by-customer', label: 'Sales by Customer'  },
+        { path: '/reports/sales-by-item',     label: 'Sales by Item'      },
+        { path: '/reports/trial-balance',     label: 'Trial Balance'      },
       ],
       isOpen: reportsOpen,
       toggle: () => setReportsOpen(!reportsOpen),
+    },
+    {
+      label: 'Accountant',
+      icon: Calculator,
+      submenu: [
+        { path: '/accountant/chart-of-accounts', label: 'Chart of Accounts'   },
+        { path: '/accountant/journals',          label: 'Manual Journals'     },
+        { path: '/accountant/budgets',           label: 'Budgets'             },
+        { path: '/accountant/currency',          label: 'Currency Adjustment' },
+        { path: '/accountant/bulk-update',       label: 'Bulk Update'         },
+      ],
+      isOpen: accountantOpen,
+      toggle: () => setAccountantOpen(!accountantOpen),
     },
   ];
 
