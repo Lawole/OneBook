@@ -4,6 +4,7 @@ import Header from '../components/Header';
 import { invoiceAPI, customerAPI, itemAPI } from '../services/api';
 import { formatDate, downloadFile } from '../utils/helpers';
 import useCurrency from '../hooks/useCurrency';
+import { useAuth } from '../context/AuthContext';
 
 const STATUSES = [
   { value: 'draft',   label: 'Draft',   color: '#6b7280' },
@@ -14,6 +15,34 @@ const STATUSES = [
 ];
 
 const emptyLine = { description: '', quantity: 1, unit_price: '' };
+
+const TotalsPanel = ({ subtotal, discountPercent, vatRate, fmt }) => {
+  const discountAmt = subtotal * (parseFloat(discountPercent) || 0) / 100;
+  const afterDiscount = subtotal - discountAmt;
+  const vatAmt = afterDiscount * (parseFloat(vatRate) || 0) / 100;
+  const total = afterDiscount + vatAmt;
+
+  return (
+    <div style={{ background: '#f9fafb', borderRadius: 8, padding: '12px 16px', marginBottom: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#6b7280', marginBottom: 4 }}>
+        <span>Subtotal</span><span>{fmt(subtotal)}</span>
+      </div>
+      {discountPercent > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#ef4444', marginBottom: 4 }}>
+          <span>Discount ({discountPercent}%)</span><span>− {fmt(discountAmt)}</span>
+        </div>
+      )}
+      {vatRate > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#6b7280', marginBottom: 4 }}>
+          <span>VAT ({vatRate}%)</span><span>+ {fmt(vatAmt)}</span>
+        </div>
+      )}
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 15, borderTop: '1px solid #e5e7eb', paddingTop: 8, marginTop: 4 }}>
+        <span>Total</span><span>{fmt(total)}</span>
+      </div>
+    </div>
+  );
+};
 
 const StatusBadge = ({ status, invoiceId, onChanged }) => {
   const [open, setOpen] = useState(false);
@@ -79,8 +108,11 @@ const StatusBadge = ({ status, invoiceId, onChanged }) => {
   );
 };
 
-const InvoiceForm = ({ initial, customers, items, fmt, onSave, onCancel, saving, error }) => {
+const InvoiceForm = ({ initial, customers, items, fmt, defaultVatRate, onSave, onCancel, saving, error }) => {
   const [form, setForm] = useState(initial);
+  const [discountPercent, setDiscountPercent] = useState(initial.discount_percent ?? 0);
+  const [vatRate, setVatRate] = useState(initial.vat_rate ?? defaultVatRate ?? 0);
+
   const subtotal = form.lines.reduce((s, l) => s + (parseFloat(l.quantity) || 0) * (parseFloat(l.unit_price) || 0), 0);
 
   const updateLine = (idx, field, value) => {
@@ -95,7 +127,7 @@ const InvoiceForm = ({ initial, customers, items, fmt, onSave, onCancel, saving,
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    onSave(form);
+    onSave({ ...form, discount_percent: parseFloat(discountPercent) || 0, vat_rate: parseFloat(vatRate) || 0 });
   };
 
   return (
@@ -137,7 +169,36 @@ const InvoiceForm = ({ initial, customers, items, fmt, onSave, onCancel, saving,
         <button type="button" className="btn btn-outline" style={{ marginTop: 4 }} onClick={() => setForm({ ...form, lines: [...form.lines, { ...emptyLine }] })}>+ Add Line</button>
       </div>
 
-      <div style={{ textAlign: 'right', fontWeight: 600, marginBottom: 12 }}>Subtotal: {fmt(subtotal)}</div>
+      {/* Discount & VAT */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+        <div className="form-group" style={{ margin: 0 }}>
+          <label style={{ fontSize: 13 }}>Discount (%)</label>
+          <input
+            className="form-control"
+            type="number"
+            min="0"
+            max="100"
+            step="0.1"
+            placeholder="0"
+            value={discountPercent}
+            onChange={(e) => setDiscountPercent(e.target.value)}
+          />
+        </div>
+        <div className="form-group" style={{ margin: 0 }}>
+          <label style={{ fontSize: 13 }}>VAT / Tax Rate (%)</label>
+          <input
+            className="form-control"
+            type="number"
+            min="0"
+            step="0.1"
+            placeholder="0"
+            value={vatRate}
+            onChange={(e) => setVatRate(e.target.value)}
+          />
+        </div>
+      </div>
+
+      <TotalsPanel subtotal={subtotal} discountPercent={discountPercent} vatRate={vatRate} fmt={fmt} />
 
       <div className="form-group">
         <label>Notes</label>
@@ -155,6 +216,8 @@ const InvoiceForm = ({ initial, customers, items, fmt, onSave, onCancel, saving,
 
 const Invoices = () => {
   const { fmt } = useCurrency();
+  const { user } = useAuth();
+  const defaultVatRate = user?.tax_rate ?? 0;
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -168,7 +231,7 @@ const Invoices = () => {
   const [modal, setModal] = useState(null);
   const [editInvoice, setEditInvoice] = useState(null);
 
-  const blankForm = { customer_id: '', invoice_date: new Date().toISOString().split('T')[0], due_date: '', notes: '', lines: [{ ...emptyLine }] };
+  const blankForm = { customer_id: '', invoice_date: new Date().toISOString().split('T')[0], due_date: '', notes: '', lines: [{ ...emptyLine }], discount_percent: 0, vat_rate: defaultVatRate };
 
   const fetchInvoices = useCallback(async () => {
     try {
@@ -208,6 +271,8 @@ const Invoices = () => {
       lines: inv.items?.length
         ? inv.items.map((i) => ({ description: i.description, quantity: i.quantity, unit_price: i.unit_price }))
         : [{ ...emptyLine }],
+      discount_percent: inv.discount_percent ?? 0,
+      vat_rate: inv.vat_rate ?? defaultVatRate,
       _id: inv.id,
     });
     setModal('edit');
@@ -217,7 +282,7 @@ const Invoices = () => {
     setError('');
     setSaving(true);
     try {
-      await invoiceAPI.create({ customer_id: form.customer_id, invoice_date: form.invoice_date, due_date: form.due_date, notes: form.notes, items: form.lines.map((l) => ({ description: l.description, quantity: parseInt(l.quantity), unit_price: parseFloat(l.unit_price) })) });
+      await invoiceAPI.create({ customer_id: form.customer_id, invoice_date: form.invoice_date, due_date: form.due_date, notes: form.notes, discount_percent: form.discount_percent, vat_rate: form.vat_rate, items: form.lines.map((l) => ({ description: l.description, quantity: parseInt(l.quantity), unit_price: parseFloat(l.unit_price) })) });
       setModal(null);
       fetchInvoices();
     } catch (err) {
@@ -231,7 +296,7 @@ const Invoices = () => {
     setError('');
     setSaving(true);
     try {
-      await invoiceAPI.update(form._id, { customer_id: form.customer_id, invoice_date: form.invoice_date, due_date: form.due_date, notes: form.notes, items: form.lines.map((l) => ({ description: l.description, quantity: parseInt(l.quantity), unit_price: parseFloat(l.unit_price) })) });
+      await invoiceAPI.update(form._id, { customer_id: form.customer_id, invoice_date: form.invoice_date, due_date: form.due_date, notes: form.notes, discount_percent: form.discount_percent, vat_rate: form.vat_rate, items: form.lines.map((l) => ({ description: l.description, quantity: parseInt(l.quantity), unit_price: parseFloat(l.unit_price) })) });
       setModal(null);
       fetchInvoices();
     } catch (err) {
@@ -318,7 +383,7 @@ const Invoices = () => {
               <h3 style={{ margin: 0 }}>New Invoice</h3>
               <button onClick={closeModal} style={closeBtn}><X size={20} /></button>
             </div>
-            <InvoiceForm initial={blankForm} customers={customers} items={items} fmt={fmt} onSave={handleCreate} onCancel={closeModal} saving={saving} error={error} />
+            <InvoiceForm initial={blankForm} customers={customers} items={items} fmt={fmt} defaultVatRate={defaultVatRate} onSave={handleCreate} onCancel={closeModal} saving={saving} error={error} />
           </div>
         </div>
       )}
@@ -331,7 +396,7 @@ const Invoices = () => {
               <h3 style={{ margin: 0 }}>Edit Invoice</h3>
               <button onClick={closeModal} style={closeBtn}><X size={20} /></button>
             </div>
-            <InvoiceForm initial={editInvoice} customers={customers} items={items} fmt={fmt} onSave={handleEdit} onCancel={closeModal} saving={saving} error={error} />
+            <InvoiceForm initial={editInvoice} customers={customers} items={items} fmt={fmt} defaultVatRate={defaultVatRate} onSave={handleEdit} onCancel={closeModal} saving={saving} error={error} />
           </div>
         </div>
       )}

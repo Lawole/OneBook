@@ -1,25 +1,154 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { WORLD_CURRENCIES } from '../utils/currencies';
 
-const CURRENCIES = [
-  { code: 'USD', label: 'US Dollar',          flag: '🇺🇸', symbol: '$'   },
-  { code: 'NGN', label: 'Nigerian Naira',     flag: '🇳🇬', symbol: '₦'   },
-  { code: 'EUR', label: 'Euro',               flag: '🇪🇺', symbol: '€'   },
-  { code: 'GBP', label: 'British Pound',      flag: '🇬🇧', symbol: '£'   },
-  { code: 'CAD', label: 'Canadian Dollar',    flag: '🇨🇦', symbol: 'CA$' },
-  { code: 'AUD', label: 'Australian Dollar',  flag: '🇦🇺', symbol: 'A$'  },
-  { code: 'JPY', label: 'Japanese Yen',       flag: '🇯🇵', symbol: '¥'   },
-  { code: 'CHF', label: 'Swiss Franc',        flag: '🇨🇭', symbol: 'CHF' },
-  { code: 'INR', label: 'Indian Rupee',       flag: '🇮🇳', symbol: '₹'   },
-  { code: 'CNY', label: 'Chinese Yuan',       flag: '🇨🇳', symbol: '¥'   },
-  { code: 'GHS', label: 'Ghanaian Cedi',      flag: '🇬🇭', symbol: '₵'   },
-  { code: 'ZAR', label: 'South African Rand', flag: '🇿🇦', symbol: 'R'   },
-  { code: 'KES', label: 'Kenyan Shilling',    flag: '🇰🇪', symbol: 'KSh' },
-  { code: 'AED', label: 'UAE Dirham',         flag: '🇦🇪', symbol: 'AED' },
-  { code: 'SAR', label: 'Saudi Riyal',        flag: '🇸🇦', symbol: 'SR'  },
-];
+const CurrencyPicker = ({ value, onChange }) => {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const containerRef = useRef(null);
+  const inputRef = useRef(null);
+
+  const selected = WORLD_CURRENCIES.find((c) => c.code === value);
+  const filtered = WORLD_CURRENCIES.filter((c) => {
+    const q = search.toLowerCase();
+    return (
+      c.code.toLowerCase().includes(q) ||
+      c.label.toLowerCase().includes(q) ||
+      c.country.toLowerCase().includes(q)
+    );
+  });
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setOpen(false);
+        setSearch('');
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleOpen = () => {
+    setOpen(true);
+    setSearch('');
+    setTimeout(() => inputRef.current?.focus(), 50);
+  };
+
+  const handleSelect = (code) => {
+    onChange(code);
+    setOpen(false);
+    setSearch('');
+  };
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative' }}>
+      {/* Trigger button */}
+      <button
+        type="button"
+        onClick={handleOpen}
+        className="form-input-modern"
+        style={{
+          width: '100%',
+          textAlign: 'left',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          background: 'var(--bg-primary, #fff)',
+        }}
+      >
+        {selected ? (
+          <>
+            <span>{selected.flag}</span>
+            <span style={{ fontWeight: 500 }}>{selected.code}</span>
+            <span style={{ color: '#6b7280' }}>— {selected.label}</span>
+            <span style={{ marginLeft: 'auto', color: '#9ca3af' }}>▾</span>
+          </>
+        ) : (
+          <span style={{ color: '#9ca3af' }}>Select currency ▾</span>
+        )}
+      </button>
+
+      {/* Dropdown */}
+      {open && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 4px)',
+            left: 0,
+            right: 0,
+            background: '#fff',
+            border: '1px solid #e5e7eb',
+            borderRadius: 10,
+            boxShadow: '0 8px 30px rgba(0,0,0,0.15)',
+            zIndex: 9999,
+            overflow: 'hidden',
+          }}
+        >
+          {/* Search box */}
+          <div style={{ padding: '8px 10px', borderBottom: '1px solid #f3f4f6' }}>
+            <input
+              ref={inputRef}
+              type="text"
+              placeholder="Search currency or country..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{
+                width: '100%',
+                border: '1px solid #e5e7eb',
+                borderRadius: 6,
+                padding: '6px 10px',
+                fontSize: 13,
+                outline: 'none',
+                boxSizing: 'border-box',
+              }}
+            />
+          </div>
+
+          {/* List */}
+          <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+            {filtered.length === 0 ? (
+              <div style={{ padding: '12px 16px', color: '#9ca3af', fontSize: 13 }}>
+                No currencies found
+              </div>
+            ) : (
+              filtered.map((c) => (
+                <div
+                  key={c.code}
+                  onClick={() => handleSelect(c.code)}
+                  style={{
+                    padding: '9px 14px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    fontSize: 13,
+                    background: c.code === value ? '#eff6ff' : 'transparent',
+                    borderLeft: c.code === value ? '3px solid #3b82f6' : '3px solid transparent',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (c.code !== value) e.currentTarget.style.background = '#f9fafb';
+                  }}
+                  onMouseLeave={(e) => {
+                    if (c.code !== value) e.currentTarget.style.background = 'transparent';
+                  }}
+                >
+                  <span style={{ fontSize: 18 }}>{c.flag}</span>
+                  <span style={{ fontWeight: 600, minWidth: 40, color: '#111827' }}>{c.code}</span>
+                  <span style={{ color: '#374151', flex: 1 }}>{c.label}</span>
+                  <span style={{ color: '#9ca3af', fontSize: 11 }}>{c.symbol}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const Login = () => {
   const [mode, setMode] = useState('login'); // 'login' | 'register'
@@ -173,20 +302,7 @@ const Login = () => {
                 </div>
                 <div className="form-group-modern">
                   <label htmlFor="currency">Base Currency</label>
-                  <select
-                    id="currency"
-                    className="form-input-modern"
-                    value={currency}
-                    onChange={(e) => setCurrency(e.target.value)}
-                    required={!useDemoMode}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    {CURRENCIES.map((c) => (
-                      <option key={c.code} value={c.code}>
-                        {c.flag} {c.label} ({c.symbol})
-                      </option>
-                    ))}
-                  </select>
+                  <CurrencyPicker value={currency} onChange={setCurrency} />
                   <small style={{ color: '#6b7280', fontSize: '12px', marginTop: '4px', display: 'block' }}>
                     This will be used for all invoices, reports, and financial data.
                   </small>

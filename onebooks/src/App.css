@@ -323,6 +323,14 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.stat-card-content > div:first-child {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
 }
 
 .stat-title {
@@ -330,21 +338,29 @@ body {
   color: var(--text-secondary);
   font-weight: 500;
   margin-bottom: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .stat-value {
-  font-size: 2em;
+  font-size: clamp(1.1rem, 2.5vw, 1.75rem);
   font-weight: 700;
   color: var(--text-primary);
   margin-bottom: 8px;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  line-height: 1.2;
 }
 
 .stat-change {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.85em;
+  font-size: 0.8em;
   font-weight: 500;
+  flex-wrap: wrap;
+  word-break: break-word;
 }
 
 .stat-change.positive {
@@ -358,11 +374,13 @@ body {
 .stat-icon {
   width: 56px;
   height: 56px;
+  min-width: 56px;
   border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: white;
+  flex-shrink: 0;
 }
 
 /* ============================================
