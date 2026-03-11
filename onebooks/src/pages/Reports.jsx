@@ -2,8 +2,6 @@ import React, { useState, useCallback } from 'react';
 import { Download, TrendingUp, BarChart2, Activity, Users, Package, BookOpen } from 'lucide-react';
 import Header from '../components/Header';
 import { reportAPI } from '../services/api';
-
-const isDemoMode = () => localStorage.getItem('demoMode') === 'true';
 import { downloadFile, formatCurrency } from '../utils/helpers';
 import useCurrency from '../hooks/useCurrency';
 import {
@@ -11,6 +9,8 @@ import {
   mockSalesByItem,
   mockTrialBalance,
 } from '../utils/mockData';
+
+const isDemoMode = () => localStorage.getItem('demoMode') === 'true';
 
 const SectionTitle = ({ children }) => (
   <div style={{ fontWeight: 700, fontSize: 13, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', padding: '14px 0 6px' }}>
