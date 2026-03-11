@@ -179,9 +179,9 @@ export const fxAPI = {
 export const bulkAPI = {
   getRecords: (type, params) => {
     if (isDemoMode()) return Promise.reject(new Error('Demo mode'));
-    return api.get(`/bulk/${type}`, { params });
+    return api.get(`/accountant/${type}`, { params });
   },
-  applyBulk: (type, ids, action, value) => api.post('/bulk/apply', { type, ids, action, value }),
+  applyBulk: (type, ids, action, value) => api.post('/accountant/bulk-apply', { type, ids, action, value }),
 };
 
 export const creditNoteAPI = {

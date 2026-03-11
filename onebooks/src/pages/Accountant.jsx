@@ -7,10 +7,7 @@ import Header from '../components/Header';
 import { accountAPI, journalAPI, budgetAPI, fxAPI, bulkAPI } from '../services/api';
 import useCurrency from '../hooks/useCurrency';
 import { WORLD_CURRENCIES } from '../utils/currencies';
-import {
-  mockChartOfAccounts, mockJournals, mockBudgets, mockFxAdjustments,
-  mockInvoices, mockExpenses, mockCategories,
-} from '../utils/mockData';
+import { mockCategories } from '../utils/mockData';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared helpers
@@ -63,7 +60,7 @@ const ChartOfAccountsTab = ({ fmt }) => {
   useEffect(() => {
     accountAPI.getAll()
       .then((res) => setAccounts(res.data.accounts || []))
-      .catch(() => setAccounts(mockChartOfAccounts));
+      .catch(() => setAccounts([]));
   }, []);
 
   const filtered = accounts.filter((a) => {
@@ -208,7 +205,7 @@ const ManualJournalsTab = ({ fmt }) => {
   useEffect(() => {
     journalAPI.getAll()
       .then((res) => setJournals(res.data.journals || []))
-      .catch(() => setJournals(mockJournals));
+      .catch(() => setJournals([]));
   }, []);
 
   const totalDebits = (lines) => lines.filter((l) => l.type === 'debit').reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
@@ -416,7 +413,7 @@ const BudgetsTab = ({ fmt }) => {
   useEffect(() => {
     budgetAPI.getAll()
       .then((res) => setBudgets(res.data.budgets || []))
-      .catch(() => setBudgets(mockBudgets));
+      .catch(() => setBudgets([]));
   }, []);
 
   const openCreate = () => {
@@ -606,7 +603,7 @@ const CurrencyAdjustmentTab = ({ fmt }) => {
   useEffect(() => {
     fxAPI.getAll()
       .then((res) => setAdjustments(res.data.adjustments || []))
-      .catch(() => setAdjustments(mockFxAdjustments));
+      .catch(() => setAdjustments([]));
   }, []);
 
   const openCreate = () => { setForm(blankFx); setEditId(null); setModal(true); };
@@ -758,7 +755,7 @@ const BulkUpdateTab = ({ fmt }) => {
     setSelected(new Set()); setResult('');
     bulkAPI.getRecords(recordType, {})
       .then((res) => setRecords(res.data.records || []))
-      .catch(() => setRecords(recordType === 'invoices' ? mockInvoices : mockExpenses));
+      .catch(() => setRecords([]));
   }, [recordType]);
 
   const filtered = records.filter((r) => {

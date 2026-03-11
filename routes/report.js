@@ -466,4 +466,138 @@ router.get('/cash-flow/export', authMiddleware, async (req, res) => {
   }
 });
 
+// ── Sales by Customer ─────────────────────────────────────────────────────────
+router.get('/sales-by-customer', authMiddleware, async (req, res) => {
+  const { start_date, end_date } = req.query;
+  try {
+    let params = [req.companyId];
+    let dateFilter = '';
+    if (start_date) { dateFilter += ` AND i.invoice_date >= $${params.length + 1}`; params.push(start_date); }
+    if (end_date)   { dateFilter += ` AND i.invoice_date <= $${params.length + 1}`; params.push(end_date); }
+
+    const result = await pool.query(`
+      SELECT
+        c.name AS customer_name,
+        COUNT(i.id)                                                   AS invoice_count,
+        COALESCE(SUM(i.total_amount), 0)                              AS total_sales,
+        COALESCE(SUM(CASE WHEN i.status = 'paid' THEN i.total_amount ELSE 0 END), 0) AS paid,
+        COALESCE(SUM(CASE WHEN i.status != 'paid' THEN i.total_amount ELSE 0 END), 0) AS outstanding
+      FROM invoices i
+      JOIN customers c ON i.customer_id = c.id
+      WHERE i.company_id = $1 ${dateFilter}
+      GROUP BY c.id, c.name
+      ORDER BY total_sales DESC
+    `, params);
+
+    res.json({
+      customers: result.rows.map(r => ({
+        customer_name: r.customer_name,
+        invoice_count: parseInt(r.invoice_count),
+        total_sales:   parseFloat(r.total_sales),
+        paid:          parseFloat(r.paid),
+        outstanding:   parseFloat(r.outstanding),
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error generating Sales by Customer', error: error.message });
+  }
+});
+
+// ── Sales by Item ─────────────────────────────────────────────────────────────
+router.get('/sales-by-item', authMiddleware, async (req, res) => {
+  const { start_date, end_date } = req.query;
+  try {
+    let params = [req.companyId];
+    let dateFilter = '';
+    if (start_date) { dateFilter += ` AND i.invoice_date >= $${params.length + 1}`; params.push(start_date); }
+    if (end_date)   { dateFilter += ` AND i.invoice_date <= $${params.length + 1}`; params.push(end_date); }
+
+    const result = await pool.query(`
+      SELECT
+        ii.description                      AS item_name,
+        SUM(ii.quantity)                    AS qty_sold,
+        COALESCE(SUM(ii.line_total), 0)     AS total_revenue,
+        CASE WHEN SUM(ii.quantity) > 0
+             THEN COALESCE(SUM(ii.line_total), 0) / SUM(ii.quantity)
+             ELSE 0 END                     AS avg_price
+      FROM invoice_items ii
+      JOIN invoices i ON ii.invoice_id = i.id
+      WHERE i.company_id = $1 ${dateFilter}
+      GROUP BY ii.description
+      ORDER BY total_revenue DESC
+    `, params);
+
+    res.json({
+      items: result.rows.map(r => ({
+        item_name:     r.item_name,
+        qty_sold:      parseInt(r.qty_sold),
+        total_revenue: parseFloat(r.total_revenue),
+        avg_price:     parseFloat(r.avg_price),
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error generating Sales by Item', error: error.message });
+  }
+});
+
+// ── Trial Balance ─────────────────────────────────────────────────────────────
+router.get('/trial-balance', authMiddleware, async (req, res) => {
+  const { start_date, end_date } = req.query;
+  try {
+    // Fetch all chart of accounts entries, then compute balances from transactions
+    const coaResult = await pool.query(
+      `SELECT id, code, name, type, balance FROM chart_of_accounts
+       WHERE company_id = $1 ORDER BY code ASC`,
+      [req.companyId]
+    );
+
+    // Overlay live movement from journal lines for the period
+    let params = [req.companyId];
+    let dateFilter = '';
+    if (start_date) { dateFilter += ` AND je.date >= $${params.length + 1}`; params.push(start_date); }
+    if (end_date)   { dateFilter += ` AND je.date <= $${params.length + 1}`; params.push(end_date); }
+
+    const journalResult = await pool.query(`
+      SELECT jl.account_code,
+             SUM(CASE WHEN jl.type = 'debit'  THEN jl.amount ELSE 0 END) AS journal_debit,
+             SUM(CASE WHEN jl.type = 'credit' THEN jl.amount ELSE 0 END) AS journal_credit
+      FROM journal_lines jl
+      JOIN journal_entries je ON jl.journal_id = je.id
+      WHERE je.company_id = $1 AND je.status = 'posted' ${dateFilter}
+      GROUP BY jl.account_code
+    `, params);
+
+    const journalMap = {};
+    journalResult.rows.forEach(r => {
+      journalMap[r.account_code] = {
+        debit:  parseFloat(r.journal_debit),
+        credit: parseFloat(r.journal_credit),
+      };
+    });
+
+    // Build accounts array: debit-normal types (Asset, Expense) show on left; credit-normal on right
+    const accounts = coaResult.rows.map(row => {
+      const jd = journalMap[row.code]?.debit  || 0;
+      const jc = journalMap[row.code]?.credit || 0;
+      const base = parseFloat(row.balance);
+      const isDebitNormal = ['Asset','Expense'].includes(row.type);
+      const netBalance = base + jd - jc;
+      return {
+        code:   row.code,
+        name:   row.name,
+        type:   row.type,
+        debit:  isDebitNormal  && netBalance > 0 ? netBalance : 0,
+        credit: !isDebitNormal && netBalance > 0 ? netBalance : 0,
+      };
+    });
+
+    const totalDebit  = accounts.reduce((s, a) => s + a.debit,  0);
+    const totalCredit = accounts.reduce((s, a) => s + a.credit, 0);
+
+    res.json({ accounts, totals: { debit: totalDebit, credit: totalCredit } });
+  } catch (error) {
+    res.status(500).json({ message: 'Error generating Trial Balance', error: error.message });
+  }
+});
+
 module.exports = router;

@@ -2,6 +2,8 @@ import React, { useState, useCallback } from 'react';
 import { Download, TrendingUp, BarChart2, Activity, Users, Package, BookOpen } from 'lucide-react';
 import Header from '../components/Header';
 import { reportAPI } from '../services/api';
+
+const isDemoMode = () => localStorage.getItem('demoMode') === 'true';
 import { downloadFile, formatCurrency } from '../utils/helpers';
 import useCurrency from '../hooks/useCurrency';
 import {
@@ -307,12 +309,11 @@ const Reports = () => {
       else if (reportType === 'trial-balance')     res = await reportAPI.getTrialBalance(params);
       setData(res.data);
     } catch (err) {
-      // Fall back to demo data
-      if (reportType === 'sales-by-customer') {
+      if (reportType === 'sales-by-customer' && isDemoMode()) {
         setData({ customers: mockSalesByCustomer });
-      } else if (reportType === 'sales-by-item') {
+      } else if (reportType === 'sales-by-item' && isDemoMode()) {
         setData({ items: mockSalesByItem });
-      } else if (reportType === 'trial-balance') {
+      } else if (reportType === 'trial-balance' && isDemoMode()) {
         setData(mockTrialBalance);
       } else {
         setError(err.response?.data?.message || 'Failed to generate report');

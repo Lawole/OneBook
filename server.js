@@ -20,7 +20,8 @@ const creditNoteRoutes = require('./routes/creditnote');
 const expenseRoutes = require('./routes/expense');
 const reportRoutes = require('./routes/report');
 const dashboardRoutes = require('./routes/dashboard');
-const bankingRoutes = require('./routes/banking');
+const bankingRoutes    = require('./routes/banking');
+const accountantRoutes = require('./routes/accountant');
 
 const app = express();
 
@@ -62,7 +63,9 @@ app.use('/api/credit-notes', creditNoteRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/banking', bankingRoutes);
+app.use('/api/banking',    bankingRoutes);
+app.use('/api/accountant', accountantRoutes);
+app.use('/api/bulk',       accountantRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
