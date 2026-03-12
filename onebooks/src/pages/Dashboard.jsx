@@ -96,7 +96,7 @@ const Dashboard = () => {
           </div>
         )}
 
-        <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}>
+        <div className="stats-grid">
           <StatCard
             title="Total Revenue"
             value={fmt(stats?.total_revenue || 0)}

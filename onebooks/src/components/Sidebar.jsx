@@ -99,7 +99,7 @@ const Sidebar = () => {
               <>
                 <div className="nav-item has-submenu" onClick={item.toggle}>
                   <item.icon size={20} />
-                  <span>{item.label}</span>
+                  <span style={{ flex: 1 }}>{item.label}</span>
                   {item.isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                 </div>
                 {item.isOpen && (
