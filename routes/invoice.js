@@ -201,11 +201,12 @@ router.post('/:id/send', authMiddleware, async (req, res) => {
     // Generate PDF buffer
     const pdfBuffer = await generatePDFBuffer(invoice, itemsResult.rows);
 
-    // Send email
+    // Send email — force IPv4 (Render free tier doesn't support IPv6 outbound)
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: parseInt(process.env.SMTP_PORT || '587'),
       secure: process.env.SMTP_SECURE === 'true',
+      family: 4,
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
