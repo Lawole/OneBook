@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend,
 } from 'recharts';
@@ -13,26 +13,6 @@ import { dashboardAPI } from '../services/api';
 import { formatDate } from '../utils/helpers';
 import useCurrency from '../hooks/useCurrency';
 import { useAuth } from '../context/AuthContext';
-
-/* ── Animated counter hook ──────────────────────────────────── */
-const useCountUp = (target, duration = 1200) => {
-  const [value, setValue] = useState(0);
-  const raf = useRef(null);
-  useEffect(() => {
-    if (!target && target !== 0) return;
-    const start = performance.now();
-    const step = (now) => {
-      const progress = Math.min((now - start) / duration, 1);
-      const ease = 1 - Math.pow(1 - progress, 3);
-      setValue(Math.floor(ease * target));
-      if (progress < 1) raf.current = requestAnimationFrame(step);
-      else setValue(target);
-    };
-    raf.current = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf.current);
-  }, [target, duration]);
-  return value;
-};
 
 /* ── Greeting based on time ─────────────────────────────────── */
 const getGreeting = () => {
