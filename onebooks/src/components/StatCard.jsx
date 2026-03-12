@@ -6,21 +6,20 @@ const StatCard = ({ title, value, change, changeType, icon: Icon, color }) => {
 
   return (
     <div className="stat-card">
-      <div className="stat-card-content">
-        <div>
-          <p className="stat-title">{title}</p>
-          <h3 className="stat-value">{value}</h3>
-          {change && (
-            <div className={`stat-change ${changeType}`}>
-              {isPositive ? <TrendingUp size={16} /> : <TrendingDown size={16} />}
-              <span>{change}</span>
-            </div>
-          )}
-        </div>
-        <div className="stat-icon" style={{ background: color }}>
-          <Icon size={24} />
-        </div>
+      {/* Coloured icon badge — floats top-right, never competes with text */}
+      <div className="stat-icon" style={{ background: color }}>
+        <Icon size={22} />
       </div>
+
+      <p className="stat-title">{title}</p>
+      <h3 className="stat-value">{value}</h3>
+
+      {change && (
+        <div className={`stat-change ${changeType}`}>
+          {isPositive ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
+          <span>{change}</span>
+        </div>
+      )}
     </div>
   );
 };

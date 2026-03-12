@@ -191,6 +191,16 @@ export const creditNoteAPI = {
   downloadPDF: (id) => api.get(`/credit-notes/${id}/pdf`, { responseType: 'blob' }),
 };
 
+export const uploadAPI = {
+  avatar: (file, type, entityId) => {
+    const form = new FormData();
+    form.append('avatar', file);
+    form.append('type', type);
+    if (entityId) form.append('id', entityId);
+    return api.post('/upload/avatar', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+  },
+};
+
 export const bankingAPI = {
   getAccounts: () => api.get('/banking/accounts'),
   createAccount: (data) => api.post('/banking/accounts', data),

@@ -22,6 +22,7 @@ const reportRoutes = require('./routes/report');
 const dashboardRoutes = require('./routes/dashboard');
 const bankingRoutes    = require('./routes/banking');
 const accountantRoutes = require('./routes/accountant');
+const uploadRoutes     = require('./routes/upload');
 
 const app = express();
 
@@ -66,6 +67,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/banking',    bankingRoutes);
 app.use('/api/accountant', accountantRoutes);
 app.use('/api/bulk',       accountantRoutes);
+app.use('/api/upload',     uploadRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

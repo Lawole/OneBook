@@ -1,21 +1,43 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Search, Trash2, X, Edit2 } from 'lucide-react';
 import Header from '../components/Header';
+import AvatarUpload from '../components/AvatarUpload';
 import { customerAPI } from '../services/api';
 import useCurrency from '../hooks/useCurrency';
 
-const blank = { name: '', email: '', company_name: '', phone: '', address: '' };
+const blank = { name: '', email: '', company_name: '', phone: '', address: '', avatar_url: '' };
+
+const avatarColors = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899'];
+const avatarColor = (name) => avatarColors[(name?.charCodeAt(0) || 0) % avatarColors.length];
+const initials = (name) => name?.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2) || '?';
 
 const CustomerForm = ({ initial, onSave, onCancel, saving, error }) => {
   const [form, setForm] = useState(initial);
   const f = (field) => (e) => setForm({ ...form, [field]: e.target.value });
+
   return (
     <form onSubmit={(e) => { e.preventDefault(); onSave(form); }}>
+      {/* Avatar upload — only shown when editing an existing customer */}
+      {initial._id && (
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
+          <AvatarUpload
+            currentUrl={form.avatar_url}
+            initials={initials(form.name)}
+            bgColor={avatarColor(form.name)}
+            type="customer"
+            entityId={initial._id}
+            size={80}
+            onUploaded={(url) => setForm(f => ({ ...f, avatar_url: url }))}
+          />
+        </div>
+      )}
+
       <div className="form-group"><label>Full Name *</label><input className="form-control" required value={form.name} onChange={f('name')} placeholder="John Doe" /></div>
       <div className="form-group"><label>Email *</label><input className="form-control" type="email" required value={form.email} onChange={f('email')} placeholder="john@example.com" /></div>
       <div className="form-group"><label>Company Name</label><input className="form-control" value={form.company_name} onChange={f('company_name')} placeholder="Acme Ltd" /></div>
       <div className="form-group"><label>Phone</label><input className="form-control" value={form.phone} onChange={f('phone')} placeholder="+1 234 567 8900" /></div>
       <div className="form-group"><label>Address</label><textarea className="form-control" rows={2} value={form.address} onChange={f('address')} placeholder="123 Main St, City" /></div>
+
       {error && <div style={{ background: '#fee2e2', color: '#991b1b', padding: '10px 14px', borderRadius: 8, marginBottom: 12, fontSize: 14 }}>{error}</div>}
       <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 16 }}>
         <button type="button" className="btn btn-outline" onClick={onCancel}>Cancel</button>
@@ -63,7 +85,7 @@ const Customers = () => {
 
   const openEdit = (c) => {
     setError('');
-    setEditData({ _id: c.id, name: c.name, email: c.email, company_name: c.company_name || '', phone: c.phone || '', address: c.address || '' });
+    setEditData({ _id: c.id, name: c.name, email: c.email, company_name: c.company_name || '', phone: c.phone || '', address: c.address || '', avatar_url: c.avatar_url || '' });
     setModal('edit');
   };
 
@@ -71,9 +93,6 @@ const Customers = () => {
     if (!window.confirm('Delete this customer?')) return;
     try { await customerAPI.delete(id); fetchCustomers(); } catch (err) { console.error(err); }
   };
-
-  const initials = (name) => name?.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2) || '?';
-  const avatarColor = (name) => { const colors = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899']; return colors[name?.charCodeAt(0) % colors.length] || '#3b82f6'; };
 
   return (
     <div className="page">
@@ -102,7 +121,12 @@ const Customers = () => {
                   <tr key={c.id}>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <div style={{ width: 36, height: 36, borderRadius: '50%', background: avatarColor(c.name), color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>{initials(c.name)}</div>
+                        <div style={{ width: 38, height: 38, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: avatarColor(c.name), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          {c.avatar_url
+                            ? <img src={c.avatar_url} alt={c.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            : <span style={{ color: '#fff', fontSize: 13, fontWeight: 700 }}>{initials(c.name)}</span>
+                          }
+                        </div>
                         <div>
                           <div style={{ fontWeight: 600, color: '#1e293b' }}>{c.name}</div>
                           {c.company_name && <div style={{ fontSize: 12, color: '#94a3b8' }}>{c.company_name}</div>}
@@ -121,7 +145,7 @@ const Customers = () => {
                   <tr><td colSpan="5"><div style={{ textAlign: 'center', padding: '50px 20px' }}>
                     <div style={{ fontSize: 40, marginBottom: 12 }}>👥</div>
                     <div style={{ fontWeight: 600, color: '#1e293b', marginBottom: 6 }}>No customers yet</div>
-                    <div style={{ color: '#94a3b8', fontSize: 14 }}>Click "Add Customer" to add your first customer</div>
+                    <div style={{ color: '#94a3b8', fontSize: 14 }}>Click "Add Customer" to get started</div>
                   </div></td></tr>
                 )}
               </tbody>
@@ -142,7 +166,13 @@ const Customers = () => {
               <h3 style={{ margin: 0 }}>{modal === 'edit' ? 'Edit Customer' : 'Add Customer'}</h3>
               <button onClick={closeModal} style={closeBtn}><X size={20} /></button>
             </div>
-            <CustomerForm initial={modal === 'edit' ? editData : blank} onSave={modal === 'edit' ? handleEdit : handleCreate} onCancel={closeModal} saving={saving} error={error} />
+            <CustomerForm
+              initial={modal === 'edit' ? editData : blank}
+              onSave={modal === 'edit' ? handleEdit : handleCreate}
+              onCancel={closeModal}
+              saving={saving}
+              error={error}
+            />
           </div>
         </div>
       )}
