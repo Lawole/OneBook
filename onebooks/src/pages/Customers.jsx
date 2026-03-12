@@ -1,24 +1,70 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Search, Trash2, X, Edit2 } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Plus, Search, Trash2, X, Edit2, Camera } from 'lucide-react';
 import Header from '../components/Header';
 import AvatarUpload from '../components/AvatarUpload';
-import { customerAPI } from '../services/api';
+import { customerAPI, uploadAPI } from '../services/api';
 import useCurrency from '../hooks/useCurrency';
 
 const blank = { name: '', email: '', company_name: '', phone: '', address: '', avatar_url: '' };
 
 const avatarColors = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899'];
-const avatarColor = (name) => avatarColors[(name?.charCodeAt(0) || 0) % avatarColors.length];
-const initials = (name) => name?.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2) || '?';
+const avatarColor  = (name) => avatarColors[(name?.charCodeAt(0) || 0) % avatarColors.length];
+const initials     = (name) => name?.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2) || '?';
 
-const CustomerForm = ({ initial, onSave, onCancel, saving, error }) => {
-  const [form, setForm] = useState(initial);
+/* Avatar picker for the CREATE form (no entity ID yet) */
+const NewAvatarPicker = ({ name, onFileSelected, preview }) => {
+  const inputRef = useRef(null);
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
+      <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => inputRef.current?.click()}>
+        <input ref={inputRef} type="file" accept="image/*" style={{ display: 'none' }}
+          onChange={(e) => onFileSelected(e.target.files?.[0] || null)} />
+        <div style={{
+          width: 80, height: 80, borderRadius: '50%', overflow: 'hidden',
+          background: preview ? 'transparent' : avatarColor(name),
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          border: '2px dashed #cbd5e1',
+          transition: 'filter 0.2s',
+        }}>
+          {preview
+            ? <img src={preview} alt="preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            : <span style={{ color: '#fff', fontWeight: 700, fontSize: 24 }}>{initials(name) || '+'}</span>
+          }
+        </div>
+        <div style={{
+          position: 'absolute', bottom: 2, right: 2,
+          width: 24, height: 24, borderRadius: '50%',
+          background: '#3b82f6', border: '2px solid white',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <Camera size={12} color="white" />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const CustomerForm = ({ initial, onSave, onCancel, saving, error, isEdit }) => {
+  const [form, setForm]         = useState(initial);
+  const [avatarFile, setAvatarFile] = useState(null);
+  const [preview, setPreview]   = useState(null);
   const f = (field) => (e) => setForm({ ...form, [field]: e.target.value });
 
+  const handleFileSelected = (file) => {
+    setAvatarFile(file);
+    if (file) setPreview(URL.createObjectURL(file));
+    else setPreview(null);
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onSave(form, avatarFile);
+  };
+
   return (
-    <form onSubmit={(e) => { e.preventDefault(); onSave(form); }}>
-      {/* Avatar upload — only shown when editing an existing customer */}
-      {initial._id && (
+    <form onSubmit={handleSubmit}>
+      {isEdit ? (
+        /* Edit mode — upload goes directly to DB via AvatarUpload */
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
           <AvatarUpload
             currentUrl={form.avatar_url}
@@ -30,6 +76,9 @@ const CustomerForm = ({ initial, onSave, onCancel, saving, error }) => {
             onUploaded={(url) => setForm(f => ({ ...f, avatar_url: url }))}
           />
         </div>
+      ) : (
+        /* Create mode — collect file, upload after creation */
+        <NewAvatarPicker name={form.name} onFileSelected={handleFileSelected} preview={preview} />
       )}
 
       <div className="form-group"><label>Full Name *</label><input className="form-control" required value={form.name} onChange={f('name')} placeholder="John Doe" /></div>
@@ -50,17 +99,17 @@ const CustomerForm = ({ initial, onSave, onCancel, saving, error }) => {
 const Customers = () => {
   const { fmt } = useCurrency();
   const [customers, setCustomers] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [modal, setModal] = useState(null);
-  const [editData, setEditData] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
+  const [loading, setLoading]     = useState(true);
+  const [search, setSearch]       = useState('');
+  const [modal, setModal]         = useState(null);
+  const [editData, setEditData]   = useState(null);
+  const [saving, setSaving]       = useState(false);
+  const [error, setError]         = useState('');
 
   const fetchCustomers = useCallback(async () => {
     try {
-      const response = await customerAPI.getAll({ search });
-      setCustomers(response.data.customers);
+      const res = await customerAPI.getAll({ search });
+      setCustomers(res.data.customers);
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
   }, [search]);
@@ -69,14 +118,21 @@ const Customers = () => {
 
   const closeModal = () => { setModal(null); setEditData(null); setError(''); };
 
-  const handleCreate = async (form) => {
+  const handleCreate = async (form, avatarFile) => {
     setError(''); setSaving(true);
-    try { await customerAPI.create(form); closeModal(); fetchCustomers(); }
-    catch (err) { setError(err.response?.data?.message || 'Failed to save'); }
+    try {
+      const res = await customerAPI.create(form);
+      // Upload avatar after we have the ID
+      if (avatarFile) {
+        const newId = res.data.customer?.id;
+        if (newId) await uploadAPI.avatar(avatarFile, 'customer', newId);
+      }
+      closeModal(); fetchCustomers();
+    } catch (err) { setError(err.response?.data?.message || 'Failed to save'); }
     finally { setSaving(false); }
   };
 
-  const handleEdit = async (form) => {
+  const handleEdit = async (form, _avatarFile) => {
     setError(''); setSaving(true);
     try { await customerAPI.update(form._id, form); closeModal(); fetchCustomers(); }
     catch (err) { setError(err.response?.data?.message || 'Failed to save'); }
@@ -109,14 +165,10 @@ const Customers = () => {
         <div className="card">
           <div style={{ overflowX: 'auto' }}>
             <table className="table">
-              <thead>
-                <tr>
-                  <th>Customer</th><th>Email</th><th>Phone</th><th>Total Invoiced</th><th className="text-right">Actions</th>
-                </tr>
-              </thead>
+              <thead><tr><th>Customer</th><th>Email</th><th>Phone</th><th>Total Invoiced</th><th className="text-right">Actions</th></tr></thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan="5" style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>Loading customers...</td></tr>
+                  <tr><td colSpan="5" style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>Loading...</td></tr>
                 ) : customers.length > 0 ? customers.map((c) => (
                   <tr key={c.id}>
                     <td>
@@ -124,8 +176,7 @@ const Customers = () => {
                         <div style={{ width: 38, height: 38, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: avatarColor(c.name), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                           {c.avatar_url
                             ? <img src={c.avatar_url} alt={c.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                            : <span style={{ color: '#fff', fontSize: 13, fontWeight: 700 }}>{initials(c.name)}</span>
-                          }
+                            : <span style={{ color: '#fff', fontSize: 13, fontWeight: 700 }}>{initials(c.name)}</span>}
                         </div>
                         <div>
                           <div style={{ fontWeight: 600, color: '#1e293b' }}>{c.name}</div>
@@ -137,8 +188,8 @@ const Customers = () => {
                     <td style={{ color: '#64748b', whiteSpace: 'nowrap' }}>{c.phone || '—'}</td>
                     <td style={{ fontWeight: 600 }}>{fmt(c.total_invoiced || 0)}</td>
                     <td className="text-right" style={{ whiteSpace: 'nowrap' }}>
-                      <button className="btn-icon" onClick={() => openEdit(c)} title="Edit"><Edit2 size={16} /></button>
-                      <button className="btn-icon text-danger" onClick={() => handleDelete(c.id)} title="Delete"><Trash2 size={16} /></button>
+                      <button className="btn-icon" onClick={() => openEdit(c)}><Edit2 size={16} /></button>
+                      <button className="btn-icon text-danger" onClick={() => handleDelete(c.id)}><Trash2 size={16} /></button>
                     </td>
                   </tr>
                 )) : (
@@ -168,6 +219,7 @@ const Customers = () => {
             </div>
             <CustomerForm
               initial={modal === 'edit' ? editData : blank}
+              isEdit={modal === 'edit'}
               onSave={modal === 'edit' ? handleEdit : handleCreate}
               onCancel={closeModal}
               saving={saving}
@@ -181,8 +233,8 @@ const Customers = () => {
 };
 
 const overlayStyle = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 };
-const modalStyle = { background: '#fff', borderRadius: 12, padding: 28, width: '100%', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' };
-const modalHeader = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 };
-const closeBtn = { background: 'none', border: 'none', cursor: 'pointer', color: '#666', padding: 4 };
+const modalStyle   = { background: '#fff', borderRadius: 12, padding: 28, width: '100%', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' };
+const modalHeader  = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 };
+const closeBtn     = { background: 'none', border: 'none', cursor: 'pointer', color: '#666', padding: 4 };
 
 export default Customers;

@@ -48,6 +48,7 @@ router.get('/', authMiddleware, async (req, res) => {
         company_name: c.company_name,
         phone: c.phone,
         address: c.address,
+        avatar_url: c.avatar_url || null,
         currency_id: c.currency_id,
         currency_code: c.currency_code,
         total_invoiced: parseFloat(c.total_invoiced),

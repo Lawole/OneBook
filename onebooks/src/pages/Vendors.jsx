@@ -1,22 +1,54 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Search, Trash2, X, Edit2 } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Plus, Search, Trash2, X, Edit2, Camera } from 'lucide-react';
 import Header from '../components/Header';
 import AvatarUpload from '../components/AvatarUpload';
-import { vendorAPI } from '../services/api';
+import { vendorAPI, uploadAPI } from '../services/api';
 
 const blank = { name: '', email: '', company_name: '', phone: '', address: '', avatar_url: '' };
 
 const avatarColors = ['#f59e0b','#10b981','#3b82f6','#8b5cf6','#ef4444','#ec4899'];
-const avatarColor = (name) => avatarColors[(name?.charCodeAt(0) || 0) % avatarColors.length];
-const initials = (name) => name?.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2) || '?';
+const avatarColor  = (name) => avatarColors[(name?.charCodeAt(0) || 0) % avatarColors.length];
+const initials     = (name) => name?.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2) || '?';
 
-const VendorForm = ({ initial, onSave, onCancel, saving, error }) => {
-  const [form, setForm] = useState(initial);
+const NewAvatarPicker = ({ name, onFileSelected, preview }) => {
+  const inputRef = useRef(null);
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
+      <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => inputRef.current?.click()}>
+        <input ref={inputRef} type="file" accept="image/*" style={{ display: 'none' }}
+          onChange={(e) => onFileSelected(e.target.files?.[0] || null)} />
+        <div style={{
+          width: 80, height: 80, borderRadius: '50%', overflow: 'hidden',
+          background: preview ? 'transparent' : avatarColor(name),
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          border: '2px dashed #cbd5e1', transition: 'filter 0.2s',
+        }}>
+          {preview
+            ? <img src={preview} alt="preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            : <span style={{ color: '#fff', fontWeight: 700, fontSize: 24 }}>{initials(name) || '+'}</span>}
+        </div>
+        <div style={{ position: 'absolute', bottom: 2, right: 2, width: 24, height: 24, borderRadius: '50%', background: '#f59e0b', border: '2px solid white', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Camera size={12} color="white" />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const VendorForm = ({ initial, onSave, onCancel, saving, error, isEdit }) => {
+  const [form, setForm]       = useState(initial);
+  const [avatarFile, setAvatarFile] = useState(null);
+  const [preview, setPreview] = useState(null);
   const f = (field) => (e) => setForm({ ...form, [field]: e.target.value });
 
+  const handleFileSelected = (file) => {
+    setAvatarFile(file);
+    setPreview(file ? URL.createObjectURL(file) : null);
+  };
+
   return (
-    <form onSubmit={(e) => { e.preventDefault(); onSave(form); }}>
-      {initial._id && (
+    <form onSubmit={(e) => { e.preventDefault(); onSave(form, avatarFile); }}>
+      {isEdit ? (
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
           <AvatarUpload
             currentUrl={form.avatar_url}
@@ -28,6 +60,8 @@ const VendorForm = ({ initial, onSave, onCancel, saving, error }) => {
             onUploaded={(url) => setForm(f => ({ ...f, avatar_url: url }))}
           />
         </div>
+      ) : (
+        <NewAvatarPicker name={form.name} onFileSelected={handleFileSelected} preview={preview} />
       )}
 
       <div className="form-group"><label>Full Name *</label><input className="form-control" required value={form.name} onChange={f('name')} placeholder="Jane Smith" /></div>
@@ -46,18 +80,18 @@ const VendorForm = ({ initial, onSave, onCancel, saving, error }) => {
 };
 
 const Vendors = () => {
-  const [vendors, setVendors] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [modal, setModal] = useState(null);
+  const [vendors, setVendors]   = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [search, setSearch]     = useState('');
+  const [modal, setModal]       = useState(null);
   const [editData, setEditData] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
+  const [saving, setSaving]     = useState(false);
+  const [error, setError]       = useState('');
 
   const fetchVendors = useCallback(async () => {
     try {
-      const response = await vendorAPI.getAll({ search });
-      setVendors(response.data.vendors);
+      const res = await vendorAPI.getAll({ search });
+      setVendors(res.data.vendors);
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
   }, [search]);
@@ -66,10 +100,16 @@ const Vendors = () => {
 
   const closeModal = () => { setModal(null); setEditData(null); setError(''); };
 
-  const handleCreate = async (form) => {
+  const handleCreate = async (form, avatarFile) => {
     setError(''); setSaving(true);
-    try { await vendorAPI.create(form); closeModal(); fetchVendors(); }
-    catch (err) { setError(err.response?.data?.message || 'Failed to save'); }
+    try {
+      const res = await vendorAPI.create(form);
+      if (avatarFile) {
+        const newId = res.data.vendor?.id;
+        if (newId) await uploadAPI.avatar(avatarFile, 'vendor', newId);
+      }
+      closeModal(); fetchVendors();
+    } catch (err) { setError(err.response?.data?.message || 'Failed to save'); }
     finally { setSaving(false); }
   };
 
@@ -106,14 +146,10 @@ const Vendors = () => {
         <div className="card">
           <div style={{ overflowX: 'auto' }}>
             <table className="table">
-              <thead>
-                <tr>
-                  <th>Vendor</th><th>Email</th><th>Phone</th><th className="text-right">Actions</th>
-                </tr>
-              </thead>
+              <thead><tr><th>Vendor</th><th>Email</th><th>Phone</th><th className="text-right">Actions</th></tr></thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan="4" style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>Loading vendors...</td></tr>
+                  <tr><td colSpan="4" style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>Loading...</td></tr>
                 ) : vendors.length > 0 ? vendors.map((v) => (
                   <tr key={v.id}>
                     <td>
@@ -121,8 +157,7 @@ const Vendors = () => {
                         <div style={{ width: 38, height: 38, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: avatarColor(v.name), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                           {v.avatar_url
                             ? <img src={v.avatar_url} alt={v.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                            : <span style={{ color: '#fff', fontSize: 13, fontWeight: 700 }}>{initials(v.name)}</span>
-                          }
+                            : <span style={{ color: '#fff', fontSize: 13, fontWeight: 700 }}>{initials(v.name)}</span>}
                         </div>
                         <div>
                           <div style={{ fontWeight: 600, color: '#1e293b' }}>{v.name}</div>
@@ -133,8 +168,8 @@ const Vendors = () => {
                     <td style={{ color: '#64748b' }}>{v.email}</td>
                     <td style={{ color: '#64748b', whiteSpace: 'nowrap' }}>{v.phone || '—'}</td>
                     <td className="text-right" style={{ whiteSpace: 'nowrap' }}>
-                      <button className="btn-icon" onClick={() => openEdit(v)} title="Edit"><Edit2 size={16} /></button>
-                      <button className="btn-icon text-danger" onClick={() => handleDelete(v.id)} title="Delete"><Trash2 size={16} /></button>
+                      <button className="btn-icon" onClick={() => openEdit(v)}><Edit2 size={16} /></button>
+                      <button className="btn-icon text-danger" onClick={() => handleDelete(v.id)}><Trash2 size={16} /></button>
                     </td>
                   </tr>
                 )) : (
@@ -164,6 +199,7 @@ const Vendors = () => {
             </div>
             <VendorForm
               initial={modal === 'edit' ? editData : blank}
+              isEdit={modal === 'edit'}
               onSave={modal === 'edit' ? handleEdit : handleCreate}
               onCancel={closeModal}
               saving={saving}
@@ -177,8 +213,8 @@ const Vendors = () => {
 };
 
 const overlayStyle = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 };
-const modalStyle = { background: '#fff', borderRadius: 12, padding: 28, width: '100%', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' };
-const modalHeader = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 };
-const closeBtn = { background: 'none', border: 'none', cursor: 'pointer', color: '#666', padding: 4 };
+const modalStyle   = { background: '#fff', borderRadius: 12, padding: 28, width: '100%', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' };
+const modalHeader  = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 };
+const closeBtn     = { background: 'none', border: 'none', cursor: 'pointer', color: '#666', padding: 4 };
 
 export default Vendors;

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Camera, Loader } from 'lucide-react';
 import api from '../services/api';
 
@@ -18,6 +18,11 @@ const AvatarUpload = ({ currentUrl, initials = '?', bgColor = '#3b82f6', type, e
   const [url, setUrl] = useState(currentUrl || null);
   const [uploading, setUploading] = useState(false);
   const inputRef = useRef(null);
+
+  // Sync when parent refreshes the URL (e.g. after re-fetch)
+  useEffect(() => {
+    setUrl(currentUrl || null);
+  }, [currentUrl]);
 
   const handleFileChange = async (e) => {
     const file = e.target.files?.[0];

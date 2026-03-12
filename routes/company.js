@@ -26,6 +26,7 @@ router.get('/', authMiddleware, async (req, res) => {
       email: company.email,
       phone: company.phone,
       address: company.address,
+      avatar_url: company.avatar_url || null,
       tax_rate: parseFloat(company.tax_rate) || 0,
       base_currency: company.base_currency
     });
