@@ -125,14 +125,18 @@ const Header = ({ title, subtitle }) => {
 
         {/* Profile Avatar + Dropdown */}
         <div className="profile-menu" ref={profileRef}>
-          <div className="avatar" onClick={() => setProfileOpen(!profileOpen)}>
-            {user?.name?.charAt(0).toUpperCase()}
+          <div className="avatar" onClick={() => setProfileOpen(!profileOpen)} style={{ overflow: 'hidden', padding: 0 }}>
+            {user?.avatar_url
+              ? <img src={user.avatar_url} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
+              : user?.name?.charAt(0).toUpperCase()}
           </div>
           {profileOpen && (
             <div className="profile-dropdown">
               <div className="profile-dropdown-header">
-                <div className="profile-dropdown-avatar">
-                  {user?.name?.charAt(0).toUpperCase()}
+                <div className="profile-dropdown-avatar" style={{ overflow: 'hidden', padding: 0 }}>
+                  {user?.avatar_url
+                    ? <img src={user.avatar_url} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
+                    : user?.name?.charAt(0).toUpperCase()}
                 </div>
                 <div>
                   <div className="profile-dropdown-name">{user?.name}</div>

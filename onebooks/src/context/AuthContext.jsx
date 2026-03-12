@@ -112,6 +112,15 @@ export const AuthProvider = ({ children }) => {
     resetTimers();
   };
 
+  // Merge partial fields into the user object (e.g. after avatar upload)
+  const updateUser = (partialData) => {
+    setUser((prev) => {
+      const updated = { ...prev, ...partialData };
+      localStorage.setItem('user', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
   // ── "Stay logged in" handler ──────────────────────────────────
   const stayLoggedIn = () => {
     setShowWarning(false);
@@ -120,7 +129,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   const value = {
-    user, token, login, logout, stayLoggedIn,
+    user, token, login, logout, stayLoggedIn, updateUser,
     isAuthenticated: !!token, isDemoMode, loading,
   };
 

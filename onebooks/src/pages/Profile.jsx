@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 
 const Profile = () => {
-  const { user } = useAuth();
+  const { user, updateUser } = useAuth();
   const [company, setCompany] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -35,7 +35,7 @@ const Profile = () => {
             bgColor="linear-gradient(135deg,#667eea,#764ba2)"
             type="company"
             size={88}
-            onUploaded={(url) => setCompany(c => ({ ...c, avatar_url: url }))}
+            onUploaded={(url) => { setCompany(c => ({ ...c, avatar_url: url })); updateUser({ avatar_url: url }); }}
           />
           <div>
             <h2 className="profile-name">{name}</h2>

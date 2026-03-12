@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend,
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, BarChart, Bar,
 } from 'recharts';
 import {
   DollarSign, TrendingUp, FileText, AlertCircle, BarChart2,
-  ArrowUpRight, ArrowDownRight, Plus, Users, ShoppingCart, Eye,
-  ChevronRight,
+  ArrowUpRight, ArrowDownRight, Plus, Users, ShoppingCart,
+  Eye, ChevronRight, Zap,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import Header from '../components/Header';
@@ -14,82 +15,104 @@ import { formatDate } from '../utils/helpers';
 import useCurrency from '../hooks/useCurrency';
 import { useAuth } from '../context/AuthContext';
 
-/* ── Greeting based on time ─────────────────────────────────── */
-const getGreeting = () => {
+/* ── Count-up hook ─────────────────────────────────────────────── */
+const useCountUp = (target, duration = 1400) => {
+  const [val, setVal] = useState(0);
+  const rafRef = useRef(null);
+  useEffect(() => {
+    if (!target && target !== 0) return;
+    cancelAnimationFrame(rafRef.current);
+    const start = performance.now();
+    const tick = (now) => {
+      const p = Math.min((now - start) / duration, 1);
+      const e = 1 - Math.pow(1 - p, 3);
+      setVal(Math.round(e * target));
+      if (p < 1) rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [target, duration]);
+  return val;
+};
+
+/* ── Greeting ──────────────────────────────────────────────────── */
+const greeting = () => {
   const h = new Date().getHours();
   if (h < 12) return 'Good morning';
   if (h < 17) return 'Good afternoon';
   return 'Good evening';
 };
 
-/* ── Custom tooltip for charts ───────────────────────────────── */
-const CustomTooltip = ({ active, payload, label, fmt }) => {
+/* ── Dark tooltip ──────────────────────────────────────────────── */
+const DarkTooltip = ({ active, payload, label, fmt }) => {
   if (!active || !payload?.length) return null;
   return (
-    <div style={{ background: '#1e293b', borderRadius: 10, padding: '10px 16px', boxShadow: '0 8px 24px rgba(0,0,0,0.25)' }}>
-      <p style={{ color: '#94a3b8', fontSize: 12, margin: '0 0 6px' }}>{label}</p>
+    <div style={{ background: '#1e293b', borderRadius: 10, padding: '10px 16px', boxShadow: '0 8px 30px rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.07)' }}>
+      <p style={{ color: '#64748b', fontSize: 11, margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</p>
       {payload.map((p, i) => (
-        <p key={i} style={{ color: p.color, margin: '3px 0', fontSize: 13, fontWeight: 600 }}>
-          {p.name}: {fmt(p.value)}
-        </p>
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0' }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: p.color, flexShrink: 0 }} />
+          <span style={{ color: '#94a3b8', fontSize: 12 }}>{p.name}:</span>
+          <span style={{ color: '#fff', fontSize: 13, fontWeight: 700 }}>{fmt(p.value)}</span>
+        </div>
       ))}
     </div>
   );
 };
 
-/* ── Metric card ─────────────────────────────────────────────── */
-const MetricCard = ({ title, rawValue, displayValue, change, changeType, icon: Icon, gradient, delay = 0 }) => {
-  const isUp = changeType === 'positive';
-  return (
-    <div className="dash-metric-card" style={{ animationDelay: `${delay}ms` }}>
-      <div className="dash-metric-icon" style={{ background: gradient }}>
-        <Icon size={20} color="white" />
+/* ── Animated metric card ──────────────────────────────────────── */
+const MetricCard = ({ title, value, animVal, change, up, icon: Icon, gradient, accent, delay }) => (
+  <div className="dmc" style={{ '--accent': accent, animationDelay: `${delay}ms` }}>
+    <div className="dmc-top">
+      <div className="dmc-icon" style={{ background: gradient }}>
+        <Icon size={18} color="white" />
       </div>
-      <p className="dash-metric-title">{title}</p>
-      <h3 className="dash-metric-value">{displayValue}</h3>
-      {change && (
-        <div className={`dash-metric-change ${isUp ? 'up' : 'down'}`}>
-          {isUp ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
-          <span>{change}</span>
-        </div>
-      )}
+      <div className={`dmc-badge ${up ? 'up' : 'down'}`}>
+        {up ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+      </div>
     </div>
-  );
-};
+    <div className="dmc-value">{animVal ?? value}</div>
+    <div className="dmc-title">{title}</div>
+    {change && <div className={`dmc-change ${up ? 'up' : 'down'}`}>{change}</div>}
+    <div className="dmc-bar" />
+  </div>
+);
 
-/* ── Quick action button ─────────────────────────────────────── */
-const QuickAction = ({ icon: Icon, label, to, color, delay }) => (
-  <Link to={to} className="dash-quick-action" style={{ animationDelay: `${delay}ms` }}>
-    <div className="dash-quick-icon" style={{ background: color + '18', color }}>
-      <Icon size={20} />
+/* ── Quick action ──────────────────────────────────────────────── */
+const QA = ({ icon: Icon, label, sub, to, color, delay }) => (
+  <Link to={to} className="dqa" style={{ animationDelay: `${delay}ms` }}>
+    <div className="dqa-icon" style={{ background: color + '15', color }}>
+      <Icon size={18} />
     </div>
-    <span>{label}</span>
-    <ChevronRight size={16} style={{ marginLeft: 'auto', color: '#cbd5e1' }} />
+    <div className="dqa-text">
+      <span className="dqa-label">{label}</span>
+      {sub && <span className="dqa-sub">{sub}</span>}
+    </div>
+    <ChevronRight size={15} color="#cbd5e1" style={{ marginLeft: 'auto', flexShrink: 0 }} />
   </Link>
 );
 
-/* ── Main Dashboard ──────────────────────────────────────────── */
+/* ── Dashboard ─────────────────────────────────────────────────── */
 const Dashboard = () => {
-  const { user } = useAuth();
-  const { fmt }  = useCurrency();
-  const [stats, setStats]       = useState(null);
+  const { user }       = useAuth();
+  const { fmt }        = useCurrency();
+  const [stats, setStats]         = useState(null);
   const [chartData, setChartData] = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [demoMode, setDemoMode] = useState(false);
+  const [loading, setLoading]     = useState(true);
+  const [demo, setDemo]           = useState(false);
+  const [visible, setVisible]     = useState(false);
 
-  useEffect(() => { fetchData(); }, []); // eslint-disable-line
-
-  const getMockData = () => ({
+  const mock = {
     stats: {
+      total_revenue: 125000, total_expenses: 57570, net_profit: 67430,
       total_receivables: 45250, current_receivables: 32150,
-      total_payables: 12800,  overdue_payables: 2300,
-      total_revenue: 125000,  total_expenses: 57570,
-      net_profit: 67430,      outstanding_invoices: 23, overdue_invoices: 5,
+      total_payables: 12800, overdue_payables: 2300,
+      outstanding_invoices: 23, overdue_invoices: 5,
       recent_activity: [
         { date: '2026-03-07', description: 'INV-0045', type: 'Invoice',  amount:  5250 },
         { date: '2026-03-06', description: 'Office Supplies', type: 'Expense', amount: -450 },
         { date: '2026-03-05', description: 'INV-0044', type: 'Invoice',  amount:  3800 },
-        { date: '2026-03-04', description: 'Software Subscription', type: 'Expense', amount: -299 },
+        { date: '2026-03-04', description: 'Software Sub',   type: 'Expense', amount: -299 },
         { date: '2026-03-03', description: 'INV-0043', type: 'Invoice',  amount:  7650 },
       ],
     },
@@ -101,161 +124,215 @@ const Dashboard = () => {
       { month: 'Feb', revenue: 50000, expenses: 30000 },
       { month: 'Mar', revenue: 52000, expenses: 31000 },
     ],
-  });
-
-  const fetchData = async () => {
-    try {
-      const [sRes, tRes] = await Promise.all([dashboardAPI.getStats(), dashboardAPI.getMonthlyTrend()]);
-      setStats(sRes.data);
-      setChartData(tRes.data.months_data);
-    } catch {
-      const mock = getMockData();
-      setStats(mock.stats); setChartData(mock.chart); setDemoMode(true);
-    } finally { setLoading(false); }
   };
 
-  if (loading) {
-    return (
-      <div className="dash-loading">
-        <div className="dash-loading-spinner" />
-        <p>Loading dashboard…</p>
-      </div>
-    );
-  }
+  useEffect(() => {
+    (async () => {
+      try {
+        const [sR, tR] = await Promise.all([dashboardAPI.getStats(), dashboardAPI.getMonthlyTrend()]);
+        setStats(sR.data); setChartData(tR.data.months_data);
+      } catch {
+        setStats(mock.stats); setChartData(mock.chart); setDemo(true);
+      } finally {
+        setLoading(false);
+        setTimeout(() => setVisible(true), 60);
+      }
+    })();
+  }, []); // eslint-disable-line
 
-  const s = stats || {};
+  /* count-up targets */
+  const s          = stats || {};
+  const cRevenue   = useCountUp(visible ? (s.total_revenue   || 0) : 0);
+  const cProfit    = useCountUp(visible ? (s.net_profit      || 0) : 0);
+  const cReceiv    = useCountUp(visible ? (s.total_receivables || 0) : 0);
+  const cPayables  = useCountUp(visible ? (s.total_payables  || 0) : 0);
+  const cInvoices  = useCountUp(visible ? (s.outstanding_invoices || 0) : 0, 900);
+
+  if (loading) return (
+    <div className="dash-loading">
+      <div className="dash-spinner" />
+      <p>Loading dashboard…</p>
+    </div>
+  );
+
+  const firstName = user?.name?.split(' ')[0] || 'there';
 
   return (
-    <div className="page dash-page">
+    <div className={`page dash-page ${visible ? 'dash-visible' : ''}`}>
       <Header
         title="Dashboard"
-        subtitle={demoMode ? 'Demo Mode — sample data shown' : `${getGreeting()}, ${user?.name?.split(' ')[0] || 'there'} 👋`}
+        subtitle={demo ? 'Demo Mode — sample data shown' : `${greeting()}, ${firstName} 👋`}
       />
 
       <div className="page-content">
-        {demoMode && (
+        {demo && (
           <div className="dash-demo-banner">
-            💡 <strong>Demo Mode:</strong> Connect your database to see real data.
+            ⚡ <strong>Demo Mode:</strong> Connect your database to see real data.
           </div>
         )}
 
-        {/* ── Welcome hero ── */}
+        {/* ── HERO ── */}
         <div className="dash-hero">
-          <div className="dash-hero-left">
-            <h2 className="dash-hero-title">Here's your business at a glance</h2>
-            <p className="dash-hero-sub">
-              {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-            </p>
-            <div className="dash-hero-pills">
-              <span className="dash-pill green">{s.outstanding_invoices || 0} outstanding invoices</span>
-              {(s.overdue_invoices || 0) > 0 && (
-                <span className="dash-pill red">{s.overdue_invoices} overdue</span>
-              )}
-            </div>
-          </div>
-          <div className="dash-hero-blob" />
-        </div>
-
-        {/* ── Metric cards ── */}
-        <div className="dash-metrics">
-          <MetricCard title="Total Revenue"      displayValue={fmt(s.total_revenue || 0)}     change={`Expenses: ${fmt(s.total_expenses || 0)}`} changeType="positive" icon={BarChart2}    gradient="linear-gradient(135deg,#8b5cf6,#6366f1)" delay={0} />
-          <MetricCard title="Net Profit"         displayValue={fmt(s.net_profit || 0)}         change="This fiscal year"                           changeType={s.net_profit >= 0 ? 'positive' : 'negative'} icon={TrendingUp} gradient="linear-gradient(135deg,#10b981,#059669)" delay={80} />
-          <MetricCard title="Total Receivables"  displayValue={fmt(s.total_receivables || 0)}  change={`Current: ${fmt(s.current_receivables || 0)}`} changeType="positive" icon={DollarSign}  gradient="linear-gradient(135deg,#3b82f6,#2563eb)" delay={160} />
-          <MetricCard title="Total Payables"     displayValue={fmt(s.total_payables || 0)}     change={`Overdue: ${fmt(s.overdue_payables || 0)}`} changeType="negative" icon={AlertCircle} gradient="linear-gradient(135deg,#ef4444,#dc2626)" delay={240} />
-          <MetricCard title="Open Invoices"      displayValue={String(s.outstanding_invoices || 0)} change={`${s.overdue_invoices || 0} overdue`}  changeType="negative" icon={FileText}    gradient="linear-gradient(135deg,#f59e0b,#d97706)" delay={320} />
-        </div>
-
-        {/* ── Chart + Quick actions ── */}
-        <div className="dash-mid-row">
-          {/* Revenue vs Expenses chart */}
-          <div className="card dash-chart-card">
-            <div className="card-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <h3>Revenue vs Expenses</h3>
-              <div style={{ display: 'flex', gap: 16, fontSize: 12 }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#6366f1' }}><span style={{ width: 10, height: 10, borderRadius: '50%', background: '#6366f1', display: 'inline-block' }} />Revenue</span>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#f43f5e' }}><span style={{ width: 10, height: 10, borderRadius: '50%', background: '#f43f5e', display: 'inline-block' }} />Expenses</span>
+          <div className="dash-hero-bg1" /><div className="dash-hero-bg2" />
+          <div className="dash-hero-inner">
+            <div className="dash-hero-left">
+              {user?.avatar_url
+                ? <img className="dash-hero-avatar" src={user.avatar_url} alt="company" />
+                : <div className="dash-hero-avatar dash-hero-avatar-init">{(user?.name || 'C').charAt(0).toUpperCase()}</div>
+              }
+              <div>
+                <h2 className="dash-hero-title">{greeting()}, {firstName}</h2>
+                <p className="dash-hero-date">
+                  {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                </p>
+                <div className="dash-hero-tags">
+                  <span className="dash-tag teal"><Zap size={11} /> {s.outstanding_invoices || 0} open invoices</span>
+                  {(s.overdue_invoices || 0) > 0 && <span className="dash-tag red">⚠ {s.overdue_invoices} overdue</span>}
+                  <span className="dash-tag purple">Net profit: {fmt(s.net_profit || 0)}</span>
+                </div>
               </div>
             </div>
-            <div className="card-body" style={{ padding: '20px 8px' }}>
-              <ResponsiveContainer width="100%" height={240}>
-                <AreaChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
+            <div className="dash-hero-kpis">
+              <div className="dash-hero-kpi">
+                <span className="dash-hero-kpi-val">{fmt(s.total_revenue || 0)}</span>
+                <span className="dash-hero-kpi-label">Total Revenue</span>
+              </div>
+              <div className="dash-hero-kpi-div" />
+              <div className="dash-hero-kpi">
+                <span className="dash-hero-kpi-val">{fmt(s.total_expenses || 0)}</span>
+                <span className="dash-hero-kpi-label">Total Expenses</span>
+              </div>
+              <div className="dash-hero-kpi-div" />
+              <div className="dash-hero-kpi">
+                <span className="dash-hero-kpi-val" style={{ color: s.net_profit >= 0 ? '#34d399' : '#f87171' }}>{fmt(s.net_profit || 0)}</span>
+                <span className="dash-hero-kpi-label">Net Profit</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ── METRIC CARDS ── */}
+        <div className="dash-metrics">
+          <MetricCard title="Total Revenue"     animVal={fmt(cRevenue)}  change={`Expenses: ${fmt(s.total_expenses||0)}`}         up={true}  icon={BarChart2}    gradient="linear-gradient(135deg,#8b5cf6,#6366f1)" accent="#8b5cf6" delay={0}   />
+          <MetricCard title="Net Profit"        animVal={fmt(cProfit)}   change="This fiscal year"                                 up={s.net_profit>=0} icon={TrendingUp} gradient="linear-gradient(135deg,#10b981,#059669)" accent="#10b981" delay={70}  />
+          <MetricCard title="Total Receivables" animVal={fmt(cReceiv)}   change={`Current: ${fmt(s.current_receivables||0)}`}     up={true}  icon={DollarSign}  gradient="linear-gradient(135deg,#3b82f6,#2563eb)" accent="#3b82f6" delay={140} />
+          <MetricCard title="Total Payables"    animVal={fmt(cPayables)} change={`Overdue: ${fmt(s.overdue_payables||0)}`}        up={false} icon={AlertCircle} gradient="linear-gradient(135deg,#ef4444,#dc2626)" accent="#ef4444" delay={210} />
+          <MetricCard title="Open Invoices"     animVal={String(cInvoices)} change={`${s.overdue_invoices||0} overdue`}           up={false} icon={FileText}    gradient="linear-gradient(135deg,#f59e0b,#d97706)" accent="#f59e0b" delay={280} />
+        </div>
+
+        {/* ── CHART ROW ── */}
+        <div className="dash-mid">
+
+          {/* Area chart */}
+          <div className="card dash-chart-card">
+            <div className="card-header">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <h3 style={{ margin: 0 }}>Revenue vs Expenses</h3>
+                  <p style={{ margin: '4px 0 0', fontSize: 12, color: '#94a3b8' }}>Last 6 months overview</p>
+                </div>
+                <div style={{ display: 'flex', gap: 14 }}>
+                  {[['#6366f1','Revenue'],['#f43f5e','Expenses']].map(([c,l]) => (
+                    <span key={l} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#64748b' }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 2, background: c, display: 'inline-block' }} />{l}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="card-body" style={{ padding: '16px 8px 16px 4px' }}>
+              <ResponsiveContainer width="100%" height={220}>
+                <AreaChart data={chartData} margin={{ top: 4, right: 12, left: -10, bottom: 0 }}>
                   <defs>
-                    <linearGradient id="gRev" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor="#6366f1" stopOpacity={0.25} />
-                      <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                    <linearGradient id="gR" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%"   stopColor="#6366f1" stopOpacity={0.3} />
+                      <stop offset="100%" stopColor="#6366f1" stopOpacity={0} />
                     </linearGradient>
-                    <linearGradient id="gExp" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor="#f43f5e" stopOpacity={0.2} />
-                      <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
+                    <linearGradient id="gE" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%"   stopColor="#f43f5e" stopOpacity={0.2} />
+                      <stop offset="100%" stopColor="#f43f5e" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                  <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => `${(v/1000).toFixed(0)}k`} />
-                  <Tooltip content={<CustomTooltip fmt={fmt} />} />
-                  <Area type="monotone" dataKey="revenue"  name="Revenue"  stroke="#6366f1" strokeWidth={2.5} fill="url(#gRev)" dot={false} activeDot={{ r: 5, fill: '#6366f1' }} />
-                  <Area type="monotone" dataKey="expenses" name="Expenses" stroke="#f43f5e" strokeWidth={2.5} fill="url(#gExp)" dot={false} activeDot={{ r: 5, fill: '#f43f5e' }} />
+                  <CartesianGrid strokeDasharray="4 4" stroke="#f1f5f9" />
+                  <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v/1000).toFixed(0)}k`} width={36} />
+                  <Tooltip content={<DarkTooltip fmt={fmt} />} />
+                  <Area type="monotone" dataKey="revenue"  name="Revenue"  stroke="#6366f1" strokeWidth={2.5} fill="url(#gR)" dot={false} activeDot={{ r: 5, strokeWidth: 0, fill: '#6366f1' }} />
+                  <Area type="monotone" dataKey="expenses" name="Expenses" stroke="#f43f5e" strokeWidth={2.5} fill="url(#gE)" dot={false} activeDot={{ r: 5, strokeWidth: 0, fill: '#f43f5e' }} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
           </div>
 
           {/* Quick actions */}
-          <div className="dash-actions-col">
-            <div className="card" style={{ height: '100%' }}>
-              <div className="card-header"><h3>Quick Actions</h3></div>
-              <div className="card-body" style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <QuickAction icon={Plus}         label="New Invoice"    to="/invoices"    color="#6366f1" delay={0} />
-                <QuickAction icon={Users}        label="Add Customer"   to="/customers"   color="#10b981" delay={60} />
-                <QuickAction icon={ShoppingCart} label="Record Expense" to="/expenses"    color="#f59e0b" delay={120} />
-                <QuickAction icon={BarChart2}    label="Profit & Loss"  to="/reports/profit-loss" color="#3b82f6" delay={180} />
-                <QuickAction icon={Eye}          label="Balance Sheet"  to="/reports/balance-sheet" color="#8b5cf6" delay={240} />
-                <QuickAction icon={FileText}     label="Trial Balance"  to="/reports/trial-balance" color="#ef4444" delay={300} />
-              </div>
+          <div className="card dash-qa-card">
+            <div className="card-header">
+              <h3 style={{ margin: 0 }}>Quick Actions</h3>
+              <p style={{ margin: '4px 0 0', fontSize: 12, color: '#94a3b8' }}>Common tasks</p>
+            </div>
+            <div className="card-body" style={{ padding: '8px 14px 14px' }}>
+              <QA icon={Plus}         label="New Invoice"    sub="Create & send"          to="/invoices"                  color="#6366f1" delay={0}   />
+              <QA icon={Users}        label="Add Customer"   sub="Manage contacts"        to="/customers"                 color="#10b981" delay={50}  />
+              <QA icon={ShoppingCart} label="Record Expense" sub="Track spending"         to="/expenses"                  color="#f59e0b" delay={100} />
+              <QA icon={BarChart2}    label="Profit & Loss"  sub="Income statement"       to="/reports/profit-loss"       color="#3b82f6" delay={150} />
+              <QA icon={Eye}          label="Balance Sheet"  sub="Financial position"     to="/reports/balance-sheet"     color="#8b5cf6" delay={200} />
+              <QA icon={FileText}     label="Trial Balance"  sub="Account balances"       to="/reports/trial-balance"     color="#ef4444" delay={250} />
             </div>
           </div>
         </div>
 
-        {/* ── Monthly bar overview ── */}
-        <div className="card" style={{ marginBottom: 24 }}>
-          <div className="card-header"><h3>Monthly Overview</h3></div>
-          <div className="card-body" style={{ padding: '20px 8px' }}>
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }} barCategoryGap="35%">
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => `${(v/1000).toFixed(0)}k`} />
-                <Tooltip content={<CustomTooltip fmt={fmt} />} />
-                <Legend wrapperStyle={{ fontSize: 12, color: '#64748b' }} />
-                <Bar dataKey="revenue"  name="Revenue"  fill="#6366f1" radius={[6,6,0,0]} />
-                <Bar dataKey="expenses" name="Expenses" fill="#f43f5e" radius={[6,6,0,0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+        {/* ── BOTTOM ROW ── */}
+        <div className="dash-bottom">
 
-        {/* ── Recent activity ── */}
-        <div className="card">
-          <div className="card-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <h3>Recent Activity</h3>
-            <Link to="/invoices" style={{ fontSize: 13, color: '#6366f1', textDecoration: 'none', fontWeight: 500 }}>View all →</Link>
+          {/* Bar chart */}
+          <div className="card">
+            <div className="card-header">
+              <h3 style={{ margin: 0 }}>Monthly Breakdown</h3>
+              <p style={{ margin: '4px 0 0', fontSize: 12, color: '#94a3b8' }}>Revenue vs Expenses per month</p>
+            </div>
+            <div className="card-body" style={{ padding: '12px 8px 16px 4px' }}>
+              <ResponsiveContainer width="100%" height={180}>
+                <BarChart data={chartData} margin={{ top: 4, right: 12, left: -10, bottom: 0 }} barCategoryGap="40%">
+                  <CartesianGrid strokeDasharray="4 4" stroke="#f1f5f9" />
+                  <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v/1000).toFixed(0)}k`} width={36} />
+                  <Tooltip content={<DarkTooltip fmt={fmt} />} />
+                  <Bar dataKey="revenue"  name="Revenue"  fill="#6366f1" radius={[5,5,0,0]} />
+                  <Bar dataKey="expenses" name="Expenses" fill="#f43f5e" radius={[5,5,0,0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           </div>
-          <div className="card-body" style={{ padding: 0 }}>
-            {(s.recent_activity?.length || 0) > 0 ? s.recent_activity.map((a, i) => (
-              <div key={i} className="dash-activity-row">
-                <div className={`dash-activity-dot ${a.amount >= 0 ? 'green' : 'red'}`} />
-                <div className="dash-activity-info">
-                  <span className="dash-activity-desc">{a.description}</span>
-                  <span className="dash-activity-type">{a.type}</span>
-                </div>
-                <span className="dash-activity-date">{formatDate(a.date)}</span>
-                <span className={`dash-activity-amount ${a.amount >= 0 ? 'green' : 'red'}`}>
-                  {a.amount >= 0 ? '+' : ''}{fmt(Math.abs(a.amount))}
-                </span>
+
+          {/* Activity feed */}
+          <div className="card">
+            <div className="card-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <h3 style={{ margin: 0 }}>Recent Activity</h3>
+                <p style={{ margin: '4px 0 0', fontSize: 12, color: '#94a3b8' }}>Latest transactions</p>
               </div>
-            )) : (
-              <div style={{ textAlign: 'center', padding: '40px 20px', color: '#94a3b8' }}>No recent activity</div>
-            )}
+              <Link to="/invoices" style={{ fontSize: 12, color: '#6366f1', textDecoration: 'none', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+                View all <ChevronRight size={14} />
+              </Link>
+            </div>
+            <div className="card-body" style={{ padding: 0 }}>
+              {(s.recent_activity?.length || 0) > 0
+                ? s.recent_activity.map((a, i) => (
+                    <div key={i} className="dash-act-row" style={{ animationDelay: `${i * 60}ms` }}>
+                      <div className={`dash-act-dot ${a.amount >= 0 ? 'teal' : 'red'}`} />
+                      <div className="dash-act-body">
+                        <span className="dash-act-desc">{a.description}</span>
+                        <span className="dash-act-badge">{a.type}</span>
+                      </div>
+                      <span className="dash-act-date">{formatDate(a.date)}</span>
+                      <span className={`dash-act-amt ${a.amount >= 0 ? 'teal' : 'red'}`}>
+                        {a.amount >= 0 ? '+' : ''}{fmt(Math.abs(a.amount))}
+                      </span>
+                    </div>
+                  ))
+                : <div style={{ textAlign: 'center', padding: '40px 20px', color: '#94a3b8', fontSize: 14 }}>No recent activity yet</div>
+              }
+            </div>
           </div>
         </div>
       </div>
