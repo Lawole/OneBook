@@ -1,14 +1,28 @@
+// Currencies where Intl outputs a code text instead of the proper symbol
+const CURRENCY_SYMBOLS = {
+  NGN: '₦',
+  GHS: '₵',
+  KES: 'KSh',
+  AED: 'د.إ',
+  SAR: '﷼',
+};
+
 export const formatCurrency = (amount, currency = 'USD') => {
+  const code = currency || 'USD';
   try {
-    return new Intl.NumberFormat('en-US', {
+    const formatted = new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: currency || 'USD',
+      currency: code,
     }).format(amount || 0);
+
+    // Replace code-text symbols with proper symbols where Intl falls back to code
+    if (CURRENCY_SYMBOLS[code]) {
+      return formatted.replace(new RegExp(`^${code}\\s?`), CURRENCY_SYMBOLS[code]);
+    }
+    return formatted;
   } catch {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-    }).format(amount || 0);
+    const sym = CURRENCY_SYMBOLS[code] || code;
+    return `${sym}${(amount || 0).toFixed(2)}`;
   }
 };
 

@@ -80,7 +80,8 @@ router.post('/register', async (req, res) => {
         phone: company.phone,
         address: company.address,
         tax_rate: parseFloat(company.tax_rate) || 0,
-        base_currency: company.base_currency
+        base_currency: company.base_currency,
+        avatar_url: company.avatar_url || null
       }
     });
   } catch (error) {
@@ -130,7 +131,8 @@ router.post('/login', async (req, res) => {
         phone: company.phone,
         address: company.address,
         tax_rate: parseFloat(company.tax_rate) || 0,
-        base_currency: company.base_currency
+        base_currency: company.base_currency,
+        avatar_url: company.avatar_url || null
       }
     });
   } catch (error) {

@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Search, Download, Trash2, X, Edit2 } from 'lucide-react';
+import { Plus, Search, Download, Trash2, X, Edit2, Send, CheckCircle, Palette } from 'lucide-react';
 import Header from '../components/Header';
 import { invoiceAPI, customerAPI, itemAPI } from '../services/api';
 import { formatDate, downloadFile } from '../utils/helpers';
 import useCurrency from '../hooks/useCurrency';
 import { useAuth } from '../context/AuthContext';
+import api from '../services/api';
 
 const STATUSES = [
   { value: 'draft',   label: 'Draft',   color: '#6b7280' },
@@ -12,6 +13,14 @@ const STATUSES = [
   { value: 'unpaid',  label: 'Unpaid',  color: '#f59e0b' },
   { value: 'paid',    label: 'Paid',    color: '#10b981' },
   { value: 'overdue', label: 'Overdue', color: '#ef4444' },
+];
+
+const TEMPLATES = [
+  { value: 'classic',  label: 'Classic',  desc: 'Clean & professional', accent: '#3b82f6' },
+  { value: 'modern',   label: 'Modern',   desc: 'Dark header with purple', accent: '#6366f1' },
+  { value: 'minimal',  label: 'Minimal',  desc: 'Simple & lightweight', accent: '#111827' },
+  { value: 'bold',     label: 'Bold',     desc: 'Strong amber accents', accent: '#f59e0b' },
+  { value: 'elegant',  label: 'Elegant',  desc: 'Gold & warm tones', accent: '#b45309' },
 ];
 
 const emptyLine = { description: '', quantity: 1, unit_price: '' };
@@ -54,10 +63,7 @@ const StatusBadge = ({ status, invoiceId, onChanged }) => {
   const handleOpen = () => {
     if (badgeRef.current) {
       const rect = badgeRef.current.getBoundingClientRect();
-      setDropdownPos({
-        top: rect.bottom + 6,
-        left: rect.left,
-      });
+      setDropdownPos({ top: rect.bottom + 6, left: rect.left });
     }
     setOpen(!open);
   };
@@ -173,28 +179,11 @@ const InvoiceForm = ({ initial, customers, items, fmt, defaultVatRate, onSave, o
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
         <div className="form-group" style={{ margin: 0 }}>
           <label style={{ fontSize: 13 }}>Discount (%)</label>
-          <input
-            className="form-control"
-            type="number"
-            min="0"
-            max="100"
-            step="0.1"
-            placeholder="0"
-            value={discountPercent}
-            onChange={(e) => setDiscountPercent(e.target.value)}
-          />
+          <input className="form-control" type="number" min="0" max="100" step="0.1" placeholder="0" value={discountPercent} onChange={(e) => setDiscountPercent(e.target.value)} />
         </div>
         <div className="form-group" style={{ margin: 0 }}>
           <label style={{ fontSize: 13 }}>VAT / Tax Rate (%)</label>
-          <input
-            className="form-control"
-            type="number"
-            min="0"
-            step="0.1"
-            placeholder="0"
-            value={vatRate}
-            onChange={(e) => setVatRate(e.target.value)}
-          />
+          <input className="form-control" type="number" min="0" step="0.1" placeholder="0" value={vatRate} onChange={(e) => setVatRate(e.target.value)} />
         </div>
       </div>
 
@@ -214,6 +203,44 @@ const InvoiceForm = ({ initial, customers, items, fmt, defaultVatRate, onSave, o
   );
 };
 
+// ── Template Picker Modal ─────────────────────────────────────
+const TemplatePicker = ({ current, onSelect, onClose }) => (
+  <div style={overlayStyle}>
+    <div style={{ ...modalStyle, maxWidth: 520 }}>
+      <div style={modalHeader}>
+        <h3 style={{ margin: 0 }}>Choose Invoice Template</h3>
+        <button onClick={onClose} style={closeBtn}><X size={20} /></button>
+      </div>
+      <p style={{ color: '#64748b', fontSize: 13, marginBottom: 20 }}>
+        The selected template will be used when downloading or sending invoices.
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        {TEMPLATES.map((t) => (
+          <div
+            key={t.value}
+            onClick={() => onSelect(t.value)}
+            style={{
+              border: `2px solid ${current === t.value ? t.accent : '#e5e7eb'}`,
+              borderRadius: 10,
+              padding: '14px 16px',
+              cursor: 'pointer',
+              background: current === t.value ? t.accent + '0d' : '#fff',
+              transition: 'all 0.15s',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+              <span style={{ fontWeight: 700, color: '#1e293b' }}>{t.label}</span>
+              {current === t.value && <span style={{ fontSize: 11, color: t.accent, fontWeight: 700 }}>✓ Active</span>}
+            </div>
+            <div style={{ fontSize: 12, color: '#64748b' }}>{t.desc}</div>
+            <div style={{ height: 4, borderRadius: 2, background: t.accent, marginTop: 10, opacity: 0.7 }} />
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+);
+
 const Invoices = () => {
   const { fmt } = useCurrency();
   const { user } = useAuth();
@@ -226,6 +253,10 @@ const Invoices = () => {
   const [items, setItems] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [sendingId, setSendingId] = useState(null);
+  const [sendMsg, setSendMsg] = useState('');
+  const [currentTemplate, setCurrentTemplate] = useState(user?.invoice_template || 'classic');
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
 
   // modal: null | 'create' | 'edit'
   const [modal, setModal] = useState(null);
@@ -313,9 +344,41 @@ const Invoices = () => {
     } catch (err) { console.error(err); }
   };
 
+  const handleSendEmail = async (inv) => {
+    if (!window.confirm(`Send invoice ${inv.invoice_number} to ${inv.customer_name} via email?`)) return;
+    setSendingId(inv.id);
+    setSendMsg('');
+    try {
+      await invoiceAPI.sendEmail(inv.id);
+      setSendMsg(`Invoice ${inv.invoice_number} sent successfully!`);
+      fetchInvoices();
+    } catch (err) {
+      setSendMsg(err.response?.data?.message || 'Failed to send invoice');
+    } finally {
+      setSendingId(null);
+      setTimeout(() => setSendMsg(''), 4000);
+    }
+  };
+
+  const handleMarkPaid = async (inv) => {
+    if (!window.confirm(`Mark invoice ${inv.invoice_number} as paid?`)) return;
+    try {
+      await invoiceAPI.update(inv.id, { status: 'paid' });
+      fetchInvoices();
+    } catch (err) { console.error(err); }
+  };
+
   const handleDelete = async (id) => {
     if (!window.confirm('Delete this invoice?')) return;
     try { await invoiceAPI.delete(id); fetchInvoices(); } catch (err) { console.error(err); }
+  };
+
+  const handleSelectTemplate = async (tpl) => {
+    setCurrentTemplate(tpl);
+    setShowTemplatePicker(false);
+    try {
+      await api.put('/company', { invoice_template: tpl });
+    } catch (err) { console.error('Could not save template preference', err); }
   };
 
   const closeModal = () => { setModal(null); setEditInvoice(null); setError(''); };
@@ -325,6 +388,17 @@ const Invoices = () => {
       <Header title="Invoices" subtitle="Manage your sales invoices" />
 
       <div className="page-content">
+        {sendMsg && (
+          <div style={{
+            padding: '10px 16px', borderRadius: 8, marginBottom: 12,
+            background: sendMsg.includes('success') ? '#d1fae5' : '#fee2e2',
+            color: sendMsg.includes('success') ? '#065f46' : '#991b1b',
+            fontSize: 13, fontWeight: 600,
+          }}>
+            {sendMsg}
+          </div>
+        )}
+
         <div className="page-actions">
           <div className="filters">
             <div className="search-box">
@@ -336,7 +410,18 @@ const Invoices = () => {
               {STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
             </select>
           </div>
-          <button className="btn btn-primary" onClick={openCreate}><Plus size={20} /> New Invoice</button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              className="btn btn-outline"
+              onClick={() => setShowTemplatePicker(true)}
+              title="Choose invoice template"
+              style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+            >
+              <Palette size={16} />
+              Template: <strong style={{ textTransform: 'capitalize' }}>{currentTemplate}</strong>
+            </button>
+            <button className="btn btn-primary" onClick={openCreate}><Plus size={20} /> New Invoice</button>
+          </div>
         </div>
 
         <div className="card">
@@ -363,6 +448,27 @@ const Invoices = () => {
                     <td className="text-right">
                       <button className="btn-icon" onClick={() => openEdit(inv)} title="Edit"><Edit2 size={18} /></button>
                       <button className="btn-icon" onClick={() => handleDownloadPDF(inv.id, inv.invoice_number)} title="Download PDF"><Download size={18} /></button>
+                      {inv.status !== 'paid' && (
+                        <button
+                          className="btn-icon"
+                          onClick={() => handleSendEmail(inv)}
+                          disabled={sendingId === inv.id}
+                          title="Send via email"
+                          style={{ color: '#3b82f6' }}
+                        >
+                          {sendingId === inv.id ? <span style={{ fontSize: 11 }}>...</span> : <Send size={18} />}
+                        </button>
+                      )}
+                      {inv.status !== 'paid' && (
+                        <button
+                          className="btn-icon"
+                          onClick={() => handleMarkPaid(inv)}
+                          title="Mark as paid"
+                          style={{ color: '#10b981' }}
+                        >
+                          <CheckCircle size={18} />
+                        </button>
+                      )}
                       <button className="btn-icon text-danger" onClick={() => handleDelete(inv.id)} title="Delete"><Trash2 size={18} /></button>
                     </td>
                   </tr>
@@ -374,6 +480,15 @@ const Invoices = () => {
           </div>
         </div>
       </div>
+
+      {/* Template Picker */}
+      {showTemplatePicker && (
+        <TemplatePicker
+          current={currentTemplate}
+          onSelect={handleSelectTemplate}
+          onClose={() => setShowTemplatePicker(false)}
+        />
+      )}
 
       {/* Create Modal */}
       {modal === 'create' && (

@@ -80,6 +80,7 @@ export const invoiceAPI = {
   update: (id, data) => api.put(`/invoices/${id}`, data),
   delete: (id) => api.delete(`/invoices/${id}`),
   downloadPDF: (id) => api.get(`/invoices/${id}/pdf`, { responseType: 'blob' }),
+  sendEmail: (id) => api.post(`/invoices/${id}/send`),
 };
 
 export const itemAPI = {
