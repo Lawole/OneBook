@@ -203,18 +203,98 @@ const InvoiceForm = ({ initial, customers, items, fmt, defaultVatRate, onSave, o
   );
 };
 
+// ── Template Preview Thumbnail ────────────────────────────────
+const TemplatePreview = ({ template }) => {
+  const t = template;
+  const styles = {
+    classic: {
+      header: { background: '#fff', borderBottom: '2px solid #3b82f6', padding: '8px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' },
+      title: { color: '#3b82f6', fontSize: 11, fontWeight: 800 },
+      company: { fontSize: 7, color: '#1e293b', fontWeight: 700 },
+      tableHead: { background: '#f8fafc' },
+      total: { background: '#1e293b', color: '#fff' },
+    },
+    modern: {
+      header: { background: '#0f172a', padding: '8px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderTop: '3px solid #6366f1' },
+      title: { color: '#818cf8', fontSize: 9, fontWeight: 800 },
+      company: { fontSize: 7, color: '#fff', fontWeight: 700 },
+      tableHead: { background: '#6366f1' },
+      total: { background: '#0f172a', color: '#fff' },
+    },
+    minimal: {
+      header: { background: '#fff', borderBottom: '2px solid #111827', padding: '8px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' },
+      title: { color: '#9ca3af', fontSize: 7, fontWeight: 700, letterSpacing: 1 },
+      company: { fontSize: 9, color: '#111827', fontWeight: 800 },
+      tableHead: { background: '#fff', borderBottom: '1px solid #d1d5db' },
+      total: { background: '#fff', color: '#111827', borderTop: '2px solid #111827' },
+    },
+    bold: {
+      header: { background: '#fff', padding: '8px 10px 8px 14px', borderLeft: '4px solid #f59e0b', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' },
+      title: { color: '#1c1917', fontSize: 11, fontWeight: 900, letterSpacing: -0.5 },
+      company: { fontSize: 7, color: '#78716c' },
+      tableHead: { background: '#1c1917' },
+      total: { background: '#f59e0b', color: '#1c1917' },
+    },
+    elegant: {
+      header: { background: '#fff', borderTop: '3px solid #b45309', borderBottom: '1px solid #fde68a', padding: '8px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' },
+      title: { color: '#b45309', fontSize: 11, fontWeight: 800 },
+      company: { fontSize: 7, color: '#1c1917', fontWeight: 700 },
+      tableHead: { background: '#fff', borderBottom: '1px solid #fde68a' },
+      total: { background: '#b45309', color: '#fef3c7' },
+    },
+  };
+  const s = styles[t.value] || styles.classic;
+
+  return (
+    <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 4, overflow: 'hidden', fontSize: 7, fontFamily: 'Arial, sans-serif', height: 130, display: 'flex', flexDirection: 'column' }}>
+      {/* Header */}
+      <div style={s.header}>
+        <div>
+          <div style={s.company}>ACME Corp</div>
+          <div style={{ fontSize: 6, color: '#94a3b8', marginTop: 1 }}>123 Business St</div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={s.title}>INVOICE</div>
+          <div style={{ fontSize: 6, color: '#94a3b8' }}>#INV-0001</div>
+        </div>
+      </div>
+      {/* Body */}
+      <div style={{ padding: '5px 8px', flex: 1 }}>
+        <div style={{ fontSize: 6, color: '#94a3b8', marginBottom: 2 }}>BILL TO</div>
+        <div style={{ fontSize: 7, color: '#1e293b', fontWeight: 600, marginBottom: 6 }}>John Smith</div>
+        {/* Table */}
+        <div style={{ ...s.tableHead, display: 'flex', justifyContent: 'space-between', padding: '3px 4px', marginBottom: 1 }}>
+          <span style={{ fontSize: 6, color: t.value === 'modern' ? '#fff' : t.value === 'bold' ? '#fef3c7' : '#94a3b8', fontWeight: 700 }}>DESCRIPTION</span>
+          <span style={{ fontSize: 6, color: t.value === 'modern' ? '#fff' : t.value === 'bold' ? '#fef3c7' : '#94a3b8', fontWeight: 700 }}>TOTAL</span>
+        </div>
+        {[['Web Design', '$800'], ['Hosting', '$120']].map(([desc, amt]) => (
+          <div key={desc} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 4px', borderBottom: '0.5px solid #f1f5f9' }}>
+            <span style={{ fontSize: 6, color: '#374151' }}>{desc}</span>
+            <span style={{ fontSize: 6, color: '#374151' }}>{amt}</span>
+          </div>
+        ))}
+      </div>
+      {/* Total bar */}
+      <div style={{ ...s.total, display: 'flex', justifyContent: 'space-between', padding: '4px 8px' }}>
+        <span style={{ fontSize: 7, fontWeight: 700 }}>TOTAL</span>
+        <span style={{ fontSize: 7, fontWeight: 800 }}>$920.00</span>
+      </div>
+    </div>
+  );
+};
+
 // ── Template Picker Modal ─────────────────────────────────────
 const TemplatePicker = ({ current, onSelect, onClose }) => (
   <div style={overlayStyle}>
-    <div style={{ ...modalStyle, maxWidth: 520 }}>
+    <div style={{ ...modalStyle, maxWidth: 620 }}>
       <div style={modalHeader}>
         <h3 style={{ margin: 0 }}>Choose Invoice Template</h3>
         <button onClick={onClose} style={closeBtn}><X size={20} /></button>
       </div>
-      <p style={{ color: '#64748b', fontSize: 13, marginBottom: 20 }}>
-        The selected template will be used when downloading or sending invoices.
+      <p style={{ color: '#64748b', fontSize: 13, marginBottom: 20, marginTop: -8 }}>
+        Preview each template below. Your selection is saved and used for all PDF downloads and email attachments.
       </p>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
         {TEMPLATES.map((t) => (
           <div
             key={t.value}
@@ -222,18 +302,22 @@ const TemplatePicker = ({ current, onSelect, onClose }) => (
             style={{
               border: `2px solid ${current === t.value ? t.accent : '#e5e7eb'}`,
               borderRadius: 10,
-              padding: '14px 16px',
+              overflow: 'hidden',
               cursor: 'pointer',
-              background: current === t.value ? t.accent + '0d' : '#fff',
               transition: 'all 0.15s',
+              boxShadow: current === t.value ? `0 0 0 3px ${t.accent}30` : 'none',
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-              <span style={{ fontWeight: 700, color: '#1e293b' }}>{t.label}</span>
-              {current === t.value && <span style={{ fontSize: 11, color: t.accent, fontWeight: 700 }}>✓ Active</span>}
+            <TemplatePreview template={t} />
+            <div style={{ padding: '10px 12px', background: current === t.value ? t.accent + '0d' : '#fafafa', borderTop: `1px solid ${current === t.value ? t.accent + '30' : '#f1f5f9'}` }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontWeight: 700, fontSize: 13, color: '#1e293b' }}>{t.label}</span>
+                {current === t.value && (
+                  <span style={{ fontSize: 10, color: t.accent, fontWeight: 700, background: t.accent + '18', padding: '2px 8px', borderRadius: 20 }}>✓ Active</span>
+                )}
+              </div>
+              <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{t.desc}</div>
             </div>
-            <div style={{ fontSize: 12, color: '#64748b' }}>{t.desc}</div>
-            <div style={{ height: 4, borderRadius: 2, background: t.accent, marginTop: 10, opacity: 0.7 }} />
           </div>
         ))}
       </div>

@@ -7,7 +7,7 @@ const router = express.Router();
 const pool = require('../config/database');
 const authMiddleware = require('../middleware/auth');
 const PDFDocument = require('pdfkit');
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 
 // ── Currency symbol map ───────────────────────────────────────
 const CURRENCY_SYMBOLS = {
@@ -201,39 +201,51 @@ router.post('/:id/send', authMiddleware, async (req, res) => {
     // Generate PDF buffer
     const pdfBuffer = await generatePDFBuffer(invoice, itemsResult.rows);
 
-    // Send email — force IPv4 (Render free tier doesn't support IPv6 outbound)
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT || '587'),
-      secure: process.env.SMTP_SECURE === 'true',
-      family: 4,
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
-    });
-
     const symbol = invoice.currency_symbol || getCurrencySymbol(invoice.company_currency) || '$';
 
-    await transporter.sendMail({
-      from: `"${invoice.company_name}" <${process.env.SMTP_USER}>`,
+    // Send email via Resend (works on Render free tier — uses HTTPS not raw SMTP)
+    const resend = new Resend(process.env.RESEND_API_KEY);
+
+    await resend.emails.send({
+      from: process.env.RESEND_FROM_EMAIL || 'invoices@resend.dev',
       to: invoice.customer_email,
       subject: `Invoice ${invoice.invoice_number} from ${invoice.company_name}`,
       html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #1e293b;">Invoice ${invoice.invoice_number}</h2>
-          <p>Dear ${invoice.customer_name},</p>
-          <p>Please find attached your invoice for <strong>${symbol}${parseFloat(invoice.total_amount).toFixed(2)}</strong>, due on <strong>${new Date(invoice.due_date).toLocaleDateString()}</strong>.</p>
-          ${invoice.notes ? `<p><em>${invoice.notes}</em></p>` : ''}
-          <p>Thank you for your business.</p>
-          <p style="color: #64748b;">— ${invoice.company_name}</p>
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b;">
+          <div style="background: #0f172a; padding: 28px 32px; border-radius: 10px 10px 0 0;">
+            <h1 style="margin:0; color:#fff; font-size:22px;">${invoice.company_name}</h1>
+          </div>
+          <div style="border: 1px solid #e2e8f0; border-top: none; padding: 32px; border-radius: 0 0 10px 10px;">
+            <h2 style="margin: 0 0 8px; font-size: 18px;">Invoice ${invoice.invoice_number}</h2>
+            <p style="color:#64748b; margin:0 0 24px;">Dear ${invoice.customer_name},</p>
+            <p>Please find your invoice attached. Here's a quick summary:</p>
+            <table style="width:100%; border-collapse:collapse; margin: 16px 0;">
+              <tr style="background:#f8fafc;">
+                <td style="padding:10px 14px; border:1px solid #e2e8f0; font-weight:600;">Invoice #</td>
+                <td style="padding:10px 14px; border:1px solid #e2e8f0;">${invoice.invoice_number}</td>
+              </tr>
+              <tr>
+                <td style="padding:10px 14px; border:1px solid #e2e8f0; font-weight:600;">Amount Due</td>
+                <td style="padding:10px 14px; border:1px solid #e2e8f0; font-weight:700; color:#1e293b;">${symbol}${parseFloat(invoice.total_amount).toFixed(2)}</td>
+              </tr>
+              <tr style="background:#f8fafc;">
+                <td style="padding:10px 14px; border:1px solid #e2e8f0; font-weight:600;">Due Date</td>
+                <td style="padding:10px 14px; border:1px solid #e2e8f0; color:#ef4444; font-weight:600;">${new Date(invoice.due_date).toLocaleDateString()}</td>
+              </tr>
+            </table>
+            ${invoice.notes ? `<p style="color:#64748b; font-style:italic;">${invoice.notes}</p>` : ''}
+            <p style="margin-top:24px;">The full invoice PDF is attached to this email.</p>
+            <p style="color:#94a3b8; font-size:13px; margin-top:32px; border-top:1px solid #e2e8f0; padding-top:16px;">
+              Sent by ${invoice.company_name} via OneBooks
+            </p>
+          </div>
         </div>
       `,
       attachments: [
         {
           filename: `invoice_${invoice.invoice_number}.pdf`,
-          content: pdfBuffer,
-          contentType: 'application/pdf',
+          content: pdfBuffer.toString('base64'),
+          content_type: 'application/pdf',
         },
       ],
     });

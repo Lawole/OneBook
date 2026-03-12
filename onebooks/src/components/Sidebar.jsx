@@ -8,7 +8,6 @@ import {
   ShoppingCart,
   Package,
   TrendingUp,
-  LogOut,
   ChevronDown,
   ChevronRight,
   Landmark,
@@ -18,7 +17,7 @@ import { useAuth } from '../context/AuthContext';
 
 const Sidebar = () => {
   const location = useLocation();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const [salesOpen, setSalesOpen] = useState(true);
   const [purchasesOpen, setPurchasesOpen] = useState(false);
   const [reportsOpen, setReportsOpen] = useState(false);
@@ -127,12 +126,6 @@ const Sidebar = () => {
         ))}
       </nav>
 
-      <div className="sidebar-footer">
-        <div className="nav-item" onClick={logout}>
-          <LogOut size={20} />
-          <span>Logout</span>
-        </div>
-      </div>
     </div>
   );
 };
