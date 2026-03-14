@@ -216,6 +216,8 @@ export const bankingAPI = {
   updateTransaction: (id, data) => api.put(`/banking/transactions/${id}`, data),
   deleteTransaction: (id) => api.delete(`/banking/transactions/${id}`),
   getMatchSuggestions: (id) => api.get(`/banking/match-suggestions/${id}`),
+  getSplits: (id) => api.get(`/banking/transactions/${id}/splits`),
+  saveSplits: (id, splits) => api.post(`/banking/transactions/${id}/splits`, { splits }),
 };
 
 export default api;
