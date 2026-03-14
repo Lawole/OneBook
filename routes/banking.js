@@ -199,10 +199,13 @@ router.get('/transactions', authMiddleware, async (req, res) => {
 
     const result = await pool.query(
       `SELECT bt.*, ba.name as account_name, ba.currency_code,
-              coa.name as coa_account_name, coa.code as coa_account_code
+              coa.name as coa_account_name, coa.code as coa_account_code,
+              rf.name as receipt_file_name, rf.url as receipt_file_url,
+              rf.reference as receipt_reference, rf.mime_type as receipt_mime_type
        FROM bank_transactions bt
        LEFT JOIN bank_accounts ba ON bt.bank_account_id = ba.id
        LEFT JOIN chart_of_accounts coa ON bt.coa_account_id = coa.id
+       LEFT JOIN files rf ON bt.receipt_file_id = rf.id
        ${where}
        ORDER BY bt.date DESC, bt.id DESC
        LIMIT $${idx} OFFSET $${idx + 1}`,
@@ -233,14 +236,17 @@ router.get('/transactions', authMiddleware, async (req, res) => {
   }
 });
 
-// PUT /banking/transactions/:id  (match, exclude, categorize, update notes)
+// PUT /banking/transactions/:id  (match, exclude, categorize, update notes, link receipt)
 router.put('/transactions/:id', authMiddleware, async (req, res) => {
-  const { status, matched_type, matched_id, category, notes, coa_account_id } = req.body;
+  const { status, matched_type, matched_id, category, notes, coa_account_id, receipt_file_id } = req.body;
   try {
     const result = await pool.query(
-      `UPDATE bank_transactions SET status=$1, matched_type=$2, matched_id=$3, category=$4, notes=$5, coa_account_id=$6
-       WHERE id=$7 AND company_id=$8 RETURNING *`,
-      [status, matched_type || null, matched_id || null, category || null, notes || null, coa_account_id || null, req.params.id, req.companyId]
+      `UPDATE bank_transactions
+       SET status=$1, matched_type=$2, matched_id=$3, category=$4, notes=$5,
+           coa_account_id=$6, receipt_file_id=COALESCE($7, receipt_file_id)
+       WHERE id=$8 AND company_id=$9 RETURNING *`,
+      [status, matched_type || null, matched_id || null, category || null, notes || null,
+       coa_account_id || null, receipt_file_id || null, req.params.id, req.companyId]
     );
     if (!result.rows.length) return res.status(404).json({ message: 'Transaction not found' });
     res.json(result.rows[0]);

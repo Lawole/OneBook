@@ -220,4 +220,23 @@ export const bankingAPI = {
   saveSplits: (id, splits) => api.post(`/banking/transactions/${id}/splits`, { splits }),
 };
 
+export const filesAPI = {
+  // Sections
+  getSections: () => api.get('/files/sections'),
+  createSection: (data) => api.post('/files/sections', data),
+  updateSection: (id, data) => api.put(`/files/sections/${id}`, data),
+  deleteSection: (id) => api.delete(`/files/sections/${id}`),
+
+  // Files
+  getFiles: (params) => api.get('/files', { params }),
+  uploadFile: (file, data) => {
+    const form = new FormData();
+    form.append('file', file);
+    Object.entries(data).forEach(([k, v]) => { if (v !== undefined && v !== null) form.append(k, v); });
+    return api.post('/files/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+  },
+  updateFile: (id, data) => api.put(`/files/${id}`, data),
+  deleteFile: (id) => api.delete(`/files/${id}`),
+};
+
 export default api;

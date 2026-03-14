@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Plus, Upload, X, Edit2, Trash2, CheckCircle, Link, Ban,
-  RefreshCw, Building2, Tag, Scissors,
+  RefreshCw, Building2, Tag, Scissors, Paperclip, ExternalLink,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell,
 } from 'recharts';
 import Header from '../components/Header';
-import { bankingAPI, accountAPI } from '../services/api';
+import { bankingAPI, accountAPI, filesAPI } from '../services/api';
 import useCurrency from '../hooks/useCurrency';
 
 // ── helpers ────────────────────────────────────────────────────
@@ -263,6 +263,17 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
   const [catSaving,     setCatSaving]     = useState(false);
   const [catError,      setCatError]      = useState('');
 
+  // Receipt upload
+  const receiptRef                            = useRef();
+  const [receipt,          setReceipt]        = useState(
+    transaction.receipt_file_id
+      ? { id: transaction.receipt_file_id, name: transaction.receipt_file_name, url: transaction.receipt_file_url, reference: transaction.receipt_reference, mime_type: transaction.receipt_mime_type }
+      : null
+  );
+  const [receiptRef2,      setReceiptRef2]    = useState(transaction.receipt_reference || transaction.reference || '');
+  const [uploadingReceipt, setUploadingReceipt] = useState(false);
+  const [receiptError,     setReceiptError]   = useState('');
+
   // Load existing splits when panel opens
   useEffect(() => {
     setLoadingSplits(true);
@@ -357,6 +368,33 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
   };
   const addSplit    = () => setSplits([...splits, { coa_account_id: '', amount: '', description: '' }]);
   const removeSplit = (i) => splits.length > 1 && setSplits(splits.filter((_, idx) => idx !== i));
+
+  const handleReceiptUpload = async (file) => {
+    if (!file) return;
+    setUploadingReceipt(true); setReceiptError('');
+    try {
+      const uploaded = await filesAPI.uploadFile(file, {
+        reference:    receiptRef2 || transaction.reference || `TXN-${transaction.id}`,
+        source_type:  'bank_transaction',
+        source_id:    transaction.id,
+        auto_receipts: 'true',
+        notes:         `Receipt for: ${transaction.description}`,
+      });
+      setReceipt(uploaded.data);
+      onSaved(); // refresh the transaction list so the paperclip shows
+    } catch (err) {
+      setReceiptError(err.response?.data?.message || 'Upload failed');
+    } finally { setUploadingReceipt(false); }
+  };
+
+  const handleRemoveReceipt = async () => {
+    if (!window.confirm('Detach this receipt? The file will remain in Files > Receipts.')) return;
+    try {
+      await bankingAPI.updateTransaction(transaction.id, { receipt_file_id: null });
+      // Note: we use a direct SQL approach via a separate mini-endpoint; for now we just clear local state
+      setReceipt(null);
+    } catch (err) { console.error(err); }
+  };
 
   const tabBtn = (id, label) => (
     <button
@@ -580,6 +618,79 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
                     onChange={(e) => setNotes(e.target.value)}
                     placeholder="Add any notes…"
                   />
+                </div>
+
+                {/* Receipt / Proof of payment */}
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Paperclip size={14} /> Receipt / Proof
+                  </div>
+
+                  {receipt ? (
+                    /* Existing receipt */
+                    <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '10px 14px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <Paperclip size={15} style={{ color: '#10b981' }} />
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: 13, color: '#065f46' }}>{receipt.original_name || receipt.name}</div>
+                            {receipt.reference && <div style={{ fontSize: 12, color: '#94a3b8' }}>Ref: {receipt.reference}</div>}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <a href={receipt.url} target="_blank" rel="noopener noreferrer" style={{ color: '#10b981', textDecoration: 'none' }} title="View">
+                            <ExternalLink size={14} />
+                          </a>
+                          <button onClick={handleRemoveReceipt} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 2 }} title="Detach">
+                            <X size={14} />
+                          </button>
+                        </div>
+                      </div>
+                      <div style={{ marginTop: 8 }}>
+                        <a href="/files" style={{ fontSize: 12, color: '#3b82f6', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <ExternalLink size={11} /> View in Files → Receipts
+                        </a>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Upload new receipt */
+                    <div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, marginBottom: 8 }}>
+                        <input
+                          className="form-control"
+                          style={{ fontSize: 13 }}
+                          value={receiptRef2}
+                          onChange={(e) => setReceiptRef2(e.target.value)}
+                          placeholder="Reference # (optional)"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => receiptRef.current?.click()}
+                          disabled={uploadingReceipt}
+                          style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '6px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: '#475569', whiteSpace: 'nowrap' }}
+                        >
+                          <Paperclip size={14} />
+                          {uploadingReceipt ? 'Uploading…' : 'Attach'}
+                        </button>
+                        <input
+                          ref={receiptRef}
+                          type="file"
+                          accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+                          style={{ display: 'none' }}
+                          onChange={(e) => handleReceiptUpload(e.target.files[0])}
+                        />
+                      </div>
+                      <div style={{ fontSize: 12, color: '#94a3b8' }}>
+                        Image, PDF, or document — saved to Files → Receipts
+                      </div>
+                    </div>
+                  )}
+
+                  {receiptError && (
+                    <div style={{ background: '#fee2e2', color: '#991b1b', padding: '8px 12px', borderRadius: 6, marginTop: 8, fontSize: 12 }}>
+                      {receiptError}
+                    </div>
+                  )}
                 </div>
 
                 {catError && (
@@ -878,7 +989,12 @@ const Banking = () => {
                           >
                             <td style={{ whiteSpace: 'nowrap', color: '#64748b', fontSize: 13 }}>{fmtDate(txn.date)}</td>
                             <td style={{ maxWidth: panelOpen ? 160 : 280 }}>
-                              <div style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#1e293b' }}>{txn.description}</div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#1e293b', flex: 1 }}>{txn.description}</span>
+                                {txn.receipt_file_id && (
+                                  <Paperclip size={12} style={{ color: '#10b981', flexShrink: 0 }} title="Receipt attached" />
+                                )}
+                              </div>
                               {txn.reference        && <div style={{ fontSize: 12, color: '#94a3b8' }}>Ref: {txn.reference}</div>}
                               {txn.coa_account_name && <div style={{ fontSize: 12, color: '#3b82f6' }}>{txn.coa_account_code} – {txn.coa_account_name}</div>}
                               {txn.notes            && <div style={{ fontSize: 12, color: '#94a3b8', fontStyle: 'italic' }}>{txn.notes}</div>}

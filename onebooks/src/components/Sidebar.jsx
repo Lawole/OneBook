@@ -12,6 +12,7 @@ import {
   ChevronRight,
   Landmark,
   Calculator,
+  FolderOpen,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -75,6 +76,7 @@ const Sidebar = () => {
       isOpen: accountantOpen,
       toggle: () => setAccountantOpen(!accountantOpen),
     },
+    { path: '/files', icon: FolderOpen, label: 'Files' },
   ];
 
   const isActive = (path) => location.pathname === path;
