@@ -15,6 +15,7 @@ import {
   FolderOpen,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import Logo from './Logo';
 
 const Sidebar = () => {
   const location = useLocation();
@@ -85,7 +86,7 @@ const Sidebar = () => {
     <div className="sidebar">
       <div className="sidebar-header">
         <div className="logo">
-          <div className="logo-icon">1B</div>
+          <Logo size={38} />
           <div>
             <div className="logo-text">OneBooks</div>
             <div className="company-name">{user?.name}</div>
