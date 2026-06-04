@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Search, Download, Trash2, X, Edit2, Send, CheckCircle, Palette } from 'lucide-react';
+import { Plus, Search, Download, Trash2, X, Edit2, Send, CheckCircle, Palette, FileText, ChevronDown } from 'lucide-react';
 import Header from '../components/Header';
 import { invoiceAPI, customerAPI, itemAPI } from '../services/api';
 import { formatDate, downloadFile } from '../utils/helpers';
@@ -7,12 +7,13 @@ import useCurrency from '../hooks/useCurrency';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 
+/* Calm muted palette — aligned with app theme */
 const STATUSES = [
-  { value: 'draft',   label: 'Draft',   color: '#6b7280' },
-  { value: 'sent',    label: 'Sent',    color: '#3b82f6' },
-  { value: 'unpaid',  label: 'Unpaid',  color: '#f59e0b' },
-  { value: 'paid',    label: 'Paid',    color: '#10b981' },
-  { value: 'overdue', label: 'Overdue', color: '#ef4444' },
+  { value: 'draft',   label: 'Draft',   color: '#7a7894', soft: '#ebe9f4' },
+  { value: 'sent',    label: 'Sent',    color: '#5b7fc3', soft: '#e6ecf6' },
+  { value: 'unpaid',  label: 'Unpaid',  color: '#c89455', soft: '#fdf2cf' },
+  { value: 'paid',    label: 'Paid',    color: '#5fbf8f', soft: '#e1f4e9' },
+  { value: 'overdue', label: 'Overdue', color: '#ef6f6f', soft: '#fde6e6' },
 ];
 
 const TEMPLATES = [
@@ -86,24 +87,28 @@ const StatusBadge = ({ status, invoiceId, onChanged }) => {
       <span
         ref={badgeRef}
         onClick={handleOpen}
-        style={{ background: current.color + '20', color: current.color, padding: '3px 10px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: `1px solid ${current.color}40`, whiteSpace: 'nowrap' }}
+        className="inv-status"
+        style={{ background: current.soft, color: current.color }}
         title="Click to change status"
       >
-        {updating ? '...' : current.label} ▾
+        <span className="inv-status-dot" style={{ background: current.color }} />
+        {updating ? '...' : current.label}
+        <ChevronDown size={11} style={{ opacity: 0.7 }} />
       </span>
       {open && (
         <>
           <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 999 }} />
-          <div style={{ position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 30px rgba(0,0,0,0.15)', zIndex: 1000, minWidth: 130, overflow: 'hidden' }}>
+          <div className="inv-status-menu" style={{ top: dropdownPos.top, left: dropdownPos.left }}>
             {STATUSES.map((s) => (
               <div
                 key={s.value}
                 onClick={() => update(s.value)}
-                style={{ padding: '9px 16px', cursor: 'pointer', fontSize: 13, color: s.color, fontWeight: 600, background: s.value === status ? s.color + '18' : 'transparent', display: 'flex', alignItems: 'center', gap: 8 }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = s.color + '18'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = s.value === status ? s.color + '18' : 'transparent'; }}
+                className="inv-status-menu-item"
+                style={{ background: s.value === status ? s.soft : 'transparent', color: s.color }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = s.soft; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = s.value === status ? s.soft : 'transparent'; }}
               >
-                <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
+                <span className="inv-status-dot" style={{ background: s.color }} />
                 {s.label}
               </div>
             ))}
@@ -467,97 +472,169 @@ const Invoices = () => {
 
   const closeModal = () => { setModal(null); setEditInvoice(null); setError(''); };
 
+  /* Derived quick stats */
+  const stats = {
+    total: invoices.length,
+    paid: invoices.filter(i => i.status === 'paid').length,
+    overdue: invoices.filter(i => i.status === 'overdue').length,
+    totalAmount: invoices.reduce((s, i) => s + (parseFloat(i.total_amount) || 0), 0),
+    outstanding: invoices.filter(i => i.status !== 'paid').reduce((s, i) => s + (parseFloat(i.total_amount) || 0), 0),
+  };
+
   return (
-    <div className="page">
+    <div className="page inv-page">
       <Header title="Invoices" subtitle="Manage your sales invoices" />
 
-      <div className="page-content">
+      <div className="dv2-content">
         {sendMsg && (
-          <div style={{
-            padding: '10px 16px', borderRadius: 8, marginBottom: 12,
-            background: sendMsg.includes('success') ? '#d1fae5' : '#fee2e2',
-            color: sendMsg.includes('success') ? '#065f46' : '#991b1b',
-            fontSize: 13, fontWeight: 600,
-          }}>
+          <div className={`inv-toast ${sendMsg.includes('success') ? 'success' : 'error'}`}>
             {sendMsg}
           </div>
         )}
 
-        <div className="page-actions">
-          <div className="filters">
-            <div className="search-box">
-              <Search size={20} />
-              <input type="text" placeholder="Search invoices..." value={search} onChange={(e) => setSearch(e.target.value)} />
-            </div>
-            <select className="form-control" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ width: 150 }}>
-              <option value="">All Status</option>
-              {STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-            </select>
+        {/* Quick stats row */}
+        <div className="inv-stats">
+          <div className="inv-stat">
+            <div className="inv-stat-label">Total invoices</div>
+            <div className="inv-stat-value">{stats.total}</div>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              className="btn btn-outline"
-              onClick={() => setShowTemplatePicker(true)}
-              title="Choose invoice template"
-              style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-            >
-              <Palette size={16} />
-              Template: <strong style={{ textTransform: 'capitalize' }}>{currentTemplate}</strong>
-            </button>
-            <button className="btn btn-primary" onClick={openCreate}><Plus size={20} /> New Invoice</button>
+          <div className="inv-stat">
+            <div className="inv-stat-label">Outstanding</div>
+            <div className="inv-stat-value">{fmt(stats.outstanding)}</div>
+          </div>
+          <div className="inv-stat">
+            <div className="inv-stat-label">Paid</div>
+            <div className="inv-stat-value">
+              {stats.paid}
+              <span className="inv-stat-frac">/ {stats.total}</span>
+            </div>
+          </div>
+          <div className="inv-stat">
+            <div className="inv-stat-label">Overdue</div>
+            <div className="inv-stat-value" style={{ color: stats.overdue > 0 ? 'var(--danger)' : 'var(--text-primary)' }}>
+              {stats.overdue}
+            </div>
           </div>
         </div>
 
-        <div className="card">
-          <div className="card-body">
-            <table className="table">
+        {/* Filters + actions row */}
+        <div className="inv-toolbar">
+          <div className="inv-search">
+            <Search size={16} />
+            <input type="text" placeholder="Search invoice #, customer…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+
+          <div className="inv-filter-pills">
+            <button
+              className={`inv-pill ${statusFilter === '' ? 'active' : ''}`}
+              onClick={() => setStatusFilter('')}
+            >
+              All
+            </button>
+            {STATUSES.map((s) => (
+              <button
+                key={s.value}
+                className={`inv-pill ${statusFilter === s.value ? 'active' : ''}`}
+                onClick={() => setStatusFilter(s.value)}
+                style={statusFilter === s.value ? { background: s.soft, color: s.color, borderColor: s.color + '40' } : {}}
+              >
+                <span className="inv-status-dot" style={{ background: s.color }} />
+                {s.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="inv-actions">
+            <button
+              className="inv-btn-outline"
+              onClick={() => setShowTemplatePicker(true)}
+              title="Choose invoice template"
+            >
+              <Palette size={14} />
+              <span>Template: <strong style={{ textTransform: 'capitalize' }}>{currentTemplate}</strong></span>
+            </button>
+            <button className="inv-btn-primary" onClick={openCreate}>
+              <Plus size={16} /> New invoice
+            </button>
+          </div>
+        </div>
+
+        {/* Table card */}
+        <div className="inv-card">
+          <div className="inv-table-wrap">
+            <table className="inv-table">
               <thead>
                 <tr>
-                  <th>Invoice #</th><th>Customer</th><th>Date</th><th>Due Date</th><th>Amount</th><th>Status</th><th className="text-right">Actions</th>
+                  <th>Invoice #</th>
+                  <th>Customer</th>
+                  <th>Date</th>
+                  <th>Due date</th>
+                  <th style={{ textAlign: 'right' }}>Amount</th>
+                  <th>Status</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan="7" className="text-center">Loading...</td></tr>
-                ) : invoices.length > 0 ? invoices.map((inv) => (
-                  <tr key={inv.id}>
-                    <td className="font-medium">{inv.invoice_number}</td>
-                    <td>{inv.customer_name}</td>
-                    <td>{formatDate(inv.invoice_date)}</td>
-                    <td>{formatDate(inv.due_date)}</td>
-                    <td>{fmt(inv.total_amount)}</td>
+                  <tr>
+                    <td colSpan="7" className="inv-empty">
+                      <div className="inv-empty-spinner" />
+                      <span>Loading invoices…</span>
+                    </td>
+                  </tr>
+                ) : invoices.length > 0 ? invoices.map((inv, i) => (
+                  <tr key={inv.id} className="inv-row" style={{ animationDelay: `${i * 25}ms` }}>
+                    <td>
+                      <span className="inv-num">{inv.invoice_number}</span>
+                    </td>
+                    <td>
+                      <div className="inv-cust">
+                        <div className="inv-cust-avatar">{(inv.customer_name || '?').charAt(0).toUpperCase()}</div>
+                        <span>{inv.customer_name}</span>
+                      </div>
+                    </td>
+                    <td className="inv-muted">{formatDate(inv.invoice_date)}</td>
+                    <td className="inv-muted">{formatDate(inv.due_date)}</td>
+                    <td style={{ textAlign: 'right' }} className="inv-amt">{fmt(inv.total_amount)}</td>
                     <td>
                       <StatusBadge status={inv.status} invoiceId={inv.id} onChanged={fetchInvoices} />
                     </td>
-                    <td className="text-right">
-                      <button className="btn-icon" onClick={() => openEdit(inv)} title="Edit"><Edit2 size={18} /></button>
-                      <button className="btn-icon" onClick={() => handleDownloadPDF(inv.id, inv.invoice_number)} title="Download PDF"><Download size={18} /></button>
-                      {inv.status !== 'paid' && (
-                        <button
-                          className="btn-icon"
-                          onClick={() => handleSendEmail(inv)}
-                          disabled={sendingId === inv.id}
-                          title="Send via email"
-                          style={{ color: '#3b82f6' }}
-                        >
-                          {sendingId === inv.id ? <span style={{ fontSize: 11 }}>...</span> : <Send size={18} />}
+                    <td style={{ textAlign: 'right' }}>
+                      <div className="inv-row-actions">
+                        <button className="inv-icon-btn" onClick={() => openEdit(inv)} title="Edit"><Edit2 size={15} /></button>
+                        <button className="inv-icon-btn" onClick={() => handleDownloadPDF(inv.id, inv.invoice_number)} title="Download PDF"><Download size={15} /></button>
+                        {inv.status !== 'paid' && (
+                          <button
+                            className="inv-icon-btn info"
+                            onClick={() => handleSendEmail(inv)}
+                            disabled={sendingId === inv.id}
+                            title="Send via email"
+                          >
+                            {sendingId === inv.id ? '…' : <Send size={15} />}
+                          </button>
+                        )}
+                        {inv.status !== 'paid' && (
+                          <button className="inv-icon-btn success" onClick={() => handleMarkPaid(inv)} title="Mark as paid">
+                            <CheckCircle size={15} />
+                          </button>
+                        )}
+                        <button className="inv-icon-btn danger" onClick={() => handleDelete(inv.id)} title="Delete">
+                          <Trash2 size={15} />
                         </button>
-                      )}
-                      {inv.status !== 'paid' && (
-                        <button
-                          className="btn-icon"
-                          onClick={() => handleMarkPaid(inv)}
-                          title="Mark as paid"
-                          style={{ color: '#10b981' }}
-                        >
-                          <CheckCircle size={18} />
-                        </button>
-                      )}
-                      <button className="btn-icon text-danger" onClick={() => handleDelete(inv.id)} title="Delete"><Trash2 size={18} /></button>
+                      </div>
                     </td>
                   </tr>
                 )) : (
-                  <tr><td colSpan="7" className="text-center text-muted">No invoices yet. Create your first invoice!</td></tr>
+                  <tr>
+                    <td colSpan="7" className="inv-empty">
+                      <div className="inv-empty-icon"><FileText size={32} /></div>
+                      <div className="inv-empty-title">No invoices yet</div>
+                      <div className="inv-empty-sub">Create your first invoice to start tracking payments.</div>
+                      <button className="inv-btn-primary" onClick={openCreate} style={{ marginTop: 14 }}>
+                        <Plus size={16} /> New invoice
+                      </button>
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>

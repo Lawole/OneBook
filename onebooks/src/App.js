@@ -2,6 +2,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { SidebarProvider, useSidebar } from './context/SidebarContext';
 import Sidebar from './components/Sidebar';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -36,14 +37,19 @@ const PrivateRoute = ({ children }) => {
   return children;
 };
 
-const AppContent = () => {
+const AppShell = () => {
   const { isAuthenticated } = useAuth();
+  const { open, close } = useSidebar();
 
   return (
-    <Router>
-      <div className="app">
-        {isAuthenticated && <Sidebar />}
-        <div className={`main-container ${isAuthenticated ? 'with-sidebar' : ''}`}>
+    <div className="app">
+      {isAuthenticated && (
+        <>
+          {open && <div className="sidebar-backdrop" onClick={close} />}
+          <Sidebar />
+        </>
+      )}
+      <div className={`main-container ${isAuthenticated ? 'with-sidebar' : ''}`}>
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route
@@ -119,9 +125,16 @@ const AppContent = () => {
           </Routes>
         </div>
       </div>
-    </Router>
   );
 };
+
+const AppContent = () => (
+  <Router>
+    <SidebarProvider>
+      <AppShell />
+    </SidebarProvider>
+  </Router>
+);
 
 function App() {
   return (

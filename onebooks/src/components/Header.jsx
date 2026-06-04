@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Bell, Search, User, Settings, LogOut, ChevronRight } from 'lucide-react';
+import { Bell, Search, User, Settings, LogOut, ChevronRight, Menu } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useSidebar } from '../context/SidebarContext';
 
 const SEARCH_INDEX = [
   { label: 'Dashboard', path: '/dashboard', section: 'Navigation' },
@@ -29,6 +30,7 @@ const SEARCH_INDEX = [
 
 const Header = ({ title, subtitle }) => {
   const { user, logout } = useAuth();
+  const { toggle: toggleSidebar } = useSidebar();
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -77,6 +79,9 @@ const Header = ({ title, subtitle }) => {
   return (
     <header className="header">
       <div className="header-left">
+        <button className="header-menu-btn" onClick={toggleSidebar} aria-label="Open menu">
+          <Menu size={20} />
+        </button>
         <div>
           <h1 className="header-title">{title}</h1>
           {subtitle && <p className="header-subtitle">{subtitle}</p>}
