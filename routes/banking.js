@@ -73,6 +73,133 @@ function parseCSV(text) {
   }).filter(r => r.date && r.amount > 0);
 }
 
+// ── Ledger posting helpers ───────────────────
+// When a bank transaction is categorised (single CoA or split), we post a
+// matching journal entry so the movement appears in chart_of_accounts balances
+// and in P&L / Balance Sheet / Cash Flow / Trial Balance reports.
+//
+//   Money out (txn.type='debit'):  Dr categorised account,  Cr Cash
+//   Money in  (txn.type='credit'): Dr Cash,                 Cr categorised account
+//
+// Reference convention: 'BNK-<txnId>'. We re-post on every update so the
+// ledger always matches the current categorisation.
+
+async function findCashAccount(client, companyId) {
+  // Prefer the conventional 1000/Cash account; fall back to first Asset account.
+  const direct = await client.query(
+    `SELECT id, code, name, type FROM chart_of_accounts
+     WHERE company_id = $1 AND code = '1000' LIMIT 1`,
+    [companyId]
+  );
+  if (direct.rows.length) return direct.rows[0];
+  const fallback = await client.query(
+    `SELECT id, code, name, type FROM chart_of_accounts
+     WHERE company_id = $1 AND type = 'Asset' ORDER BY code ASC LIMIT 1`,
+    [companyId]
+  );
+  return fallback.rows[0] || null;
+}
+
+async function deleteBankJournal(client, companyId, txnId) {
+  const reference = `BNK-${txnId}`;
+  const existing = await client.query(
+    `SELECT je.id AS journal_id, jl.account_code, jl.type AS line_type, jl.amount
+     FROM journal_entries je
+     LEFT JOIN journal_lines jl ON jl.journal_id = je.id
+     WHERE je.company_id = $1 AND je.reference = $2`,
+    [companyId, reference]
+  );
+  if (!existing.rows.length || !existing.rows[0].journal_id) return;
+  const journalId = existing.rows[0].journal_id;
+
+  // Reverse the CoA balance impact of every line before deleting.
+  for (const ln of existing.rows) {
+    if (!ln.account_code) continue;
+    const accRes = await client.query(
+      `SELECT type FROM chart_of_accounts WHERE company_id = $1 AND code = $2`,
+      [companyId, ln.account_code]
+    );
+    if (!accRes.rows.length) continue;
+    const isDebitNormal = ['Asset', 'Expense'].includes(accRes.rows[0].type);
+    const wasDebit = ln.line_type === 'debit';
+    const delta = (wasDebit === isDebitNormal) ? parseFloat(ln.amount) : -parseFloat(ln.amount);
+    await client.query(
+      `UPDATE chart_of_accounts SET balance = balance - $1, updated_at = NOW()
+       WHERE company_id = $2 AND code = $3`,
+      [delta, companyId, ln.account_code]
+    );
+  }
+  await client.query(`DELETE FROM journal_entries WHERE id = $1`, [journalId]);
+}
+
+async function postBankJournal(client, companyId, txnId, lines) {
+  // lines: [{ coa_account_id, amount, description }]
+  const validLines = (lines || []).filter(l => l.coa_account_id && parseFloat(l.amount) > 0);
+  if (!validLines.length) return;
+
+  const txnRes = await client.query(
+    `SELECT * FROM bank_transactions WHERE id = $1 AND company_id = $2`,
+    [txnId, companyId]
+  );
+  if (!txnRes.rows.length) return;
+  const txn = txnRes.rows[0];
+
+  await deleteBankJournal(client, companyId, txnId);
+
+  const cashAcc = await findCashAccount(client, companyId);
+  if (!cashAcc) return;
+
+  const totalAmount = validLines.reduce((s, l) => s + parseFloat(l.amount), 0);
+  const categorizedSide = txn.type === 'debit' ? 'debit' : 'credit';
+  const cashSide        = txn.type === 'debit' ? 'credit' : 'debit';
+  const reference = `BNK-${txnId}`;
+  const description = `Bank: ${(txn.description || '').substring(0, 200)}`;
+
+  const jeRes = await client.query(
+    `INSERT INTO journal_entries (company_id, reference, date, description, status)
+     VALUES ($1, $2, $3, $4, 'posted') RETURNING id`,
+    [companyId, reference, txn.date, description]
+  );
+  const journalId = jeRes.rows[0].id;
+
+  for (const ln of validLines) {
+    const accRes = await client.query(
+      `SELECT id, code, name, type FROM chart_of_accounts
+       WHERE id = $1 AND company_id = $2`,
+      [ln.coa_account_id, companyId]
+    );
+    if (!accRes.rows.length) continue;
+    const acc = accRes.rows[0];
+    const amount = parseFloat(ln.amount);
+    await client.query(
+      `INSERT INTO journal_lines (journal_id, account_code, account_name, type, amount)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [journalId, acc.code, acc.name, categorizedSide, amount]
+    );
+    const isDebitNormal = ['Asset', 'Expense'].includes(acc.type);
+    const isDebit = categorizedSide === 'debit';
+    const delta = (isDebit === isDebitNormal) ? amount : -amount;
+    await client.query(
+      `UPDATE chart_of_accounts SET balance = balance + $1, updated_at = NOW()
+       WHERE id = $2`,
+      [delta, acc.id]
+    );
+  }
+
+  await client.query(
+    `INSERT INTO journal_lines (journal_id, account_code, account_name, type, amount)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [journalId, cashAcc.code, cashAcc.name, cashSide, totalAmount]
+  );
+  const isCashDebitNormal = ['Asset', 'Expense'].includes(cashAcc.type);
+  const isCashDebit = cashSide === 'debit';
+  const cashDelta = (isCashDebit === isCashDebitNormal) ? totalAmount : -totalAmount;
+  await client.query(
+    `UPDATE chart_of_accounts SET balance = balance + $1, updated_at = NOW() WHERE id = $2`,
+    [cashDelta, cashAcc.id]
+  );
+}
+
 // ── Bank Accounts ────────────────────────────
 
 // GET /banking/accounts
@@ -239,8 +366,10 @@ router.get('/transactions', authMiddleware, async (req, res) => {
 // PUT /banking/transactions/:id  (match, exclude, categorize, update notes, link receipt)
 router.put('/transactions/:id', authMiddleware, async (req, res) => {
   const { status, matched_type, matched_id, category, notes, coa_account_id, receipt_file_id } = req.body;
+  const client = await pool.connect();
   try {
-    const result = await pool.query(
+    await client.query('BEGIN');
+    const result = await client.query(
       `UPDATE bank_transactions
        SET status=$1, matched_type=$2, matched_id=$3, category=$4, notes=$5,
            coa_account_id=$6, receipt_file_id=COALESCE($7, receipt_file_id)
@@ -248,20 +377,45 @@ router.put('/transactions/:id', authMiddleware, async (req, res) => {
       [status, matched_type || null, matched_id || null, category || null, notes || null,
        coa_account_id || null, receipt_file_id || null, req.params.id, req.companyId]
     );
-    if (!result.rows.length) return res.status(404).json({ message: 'Transaction not found' });
-    res.json(result.rows[0]);
+    if (!result.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Transaction not found' });
+    }
+    const txn = result.rows[0];
+
+    // Sync the ledger: post a journal when categorised, remove it otherwise.
+    if (status === 'categorized' && coa_account_id) {
+      await postBankJournal(client, req.companyId, txn.id, [
+        { coa_account_id, amount: txn.amount, description: txn.description },
+      ]);
+    } else {
+      await deleteBankJournal(client, req.companyId, txn.id);
+    }
+
+    await client.query('COMMIT');
+    res.json(txn);
   } catch (err) {
+    await client.query('ROLLBACK');
     res.status(500).json({ message: 'Error updating transaction', error: err.message });
+  } finally {
+    client.release();
   }
 });
 
 // DELETE /banking/transactions/:id
 router.delete('/transactions/:id', authMiddleware, async (req, res) => {
+  const client = await pool.connect();
   try {
-    await pool.query('DELETE FROM bank_transactions WHERE id=$1 AND company_id=$2', [req.params.id, req.companyId]);
+    await client.query('BEGIN');
+    await deleteBankJournal(client, req.companyId, req.params.id);
+    await client.query('DELETE FROM bank_transactions WHERE id=$1 AND company_id=$2', [req.params.id, req.companyId]);
+    await client.query('COMMIT');
     res.json({ message: 'Transaction deleted' });
   } catch (err) {
+    await client.query('ROLLBACK');
     res.status(500).json({ message: 'Error deleting transaction', error: err.message });
+  } finally {
+    client.release();
   }
 });
 
@@ -318,6 +472,13 @@ router.post('/transactions/:id/splits', authMiddleware, async (req, res) => {
       `UPDATE bank_transactions SET status='categorized', coa_account_id=NULL WHERE id=$1 AND company_id=$2`,
       [req.params.id, req.companyId]
     );
+
+    // Post a journal entry covering every split so the ledger reflects the categorisation.
+    await postBankJournal(client, req.companyId, req.params.id, splits.map(s => ({
+      coa_account_id: s.coa_account_id,
+      amount: s.amount,
+      description: s.description,
+    })));
 
     await client.query('COMMIT');
     res.json({ message: 'Splits saved', count: splits.length });

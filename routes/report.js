@@ -8,6 +8,36 @@ const pool = require('../config/database');
 const authMiddleware = require('../middleware/auth');
 const ExcelJS = require('exceljs');
 
+// ── Journal-derived movement helpers ──────────────────────────────
+// Bank categorisation (and any manual journal) writes to journal_lines.
+// Reports must add these movements to the static totals derived from
+// invoices/expenses so categorised bank txns appear in P&L, BS, CF.
+
+async function getJournalMovements(companyId, startDate, endDate) {
+  let filter = '';
+  const params = [companyId];
+  if (startDate) { filter += ` AND je.date >= $${params.length + 1}`; params.push(startDate); }
+  if (endDate)   { filter += ` AND je.date <= $${params.length + 1}`; params.push(endDate); }
+
+  const result = await pool.query(`
+    SELECT coa.id, coa.code, coa.name, coa.type, coa.category,
+           COALESCE(SUM(CASE WHEN jl.type = 'debit'  THEN jl.amount ELSE 0 END), 0) AS total_debit,
+           COALESCE(SUM(CASE WHEN jl.type = 'credit' THEN jl.amount ELSE 0 END), 0) AS total_credit
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.journal_id = je.id
+    JOIN chart_of_accounts coa
+      ON coa.code = jl.account_code AND coa.company_id = je.company_id
+    WHERE je.company_id = $1 AND je.status = 'posted' ${filter}
+    GROUP BY coa.id, coa.code, coa.name, coa.type, coa.category
+  `, params);
+
+  return result.rows.map(r => ({
+    id: r.id, code: r.code, name: r.name, type: r.type, category: r.category,
+    debit:  parseFloat(r.total_debit),
+    credit: parseFloat(r.total_credit),
+  }));
+}
+
 // Get Profit & Loss Report
 router.get('/profit-loss', authMiddleware, async (req, res) => {
   const { start_date, end_date } = req.query;
@@ -52,17 +82,34 @@ router.get('/profit-loss', authMiddleware, async (req, res) => {
 
     const breakdownResult = await pool.query(breakdownQuery, breakdownParams);
 
-    const totalRevenue = parseFloat(revenueResult.rows[0].total);
-    const totalExpenses = parseFloat(expenseResult.rows[0].total);
+    // Fold in journal-derived movements (e.g. categorised bank transactions)
+    const movements = await getJournalMovements(req.companyId, start_date, end_date);
+    let journalRevenue = 0;
+    let journalExpenses = 0;
+    const journalExpenseBreakdown = [];
+    for (const m of movements) {
+      if (m.type === 'Revenue') {
+        journalRevenue += (m.credit - m.debit);
+      } else if (m.type === 'Expense') {
+        const amt = m.debit - m.credit;
+        journalExpenses += amt;
+        if (amt !== 0) {
+          journalExpenseBreakdown.push({ category: m.name, amount: amt });
+        }
+      }
+    }
+
+    const totalRevenue  = parseFloat(revenueResult.rows[0].total)  + journalRevenue;
+    const totalExpenses = parseFloat(expenseResult.rows[0].total) + journalExpenses;
 
     res.json({
       total_revenue: totalRevenue,
       total_expenses: totalExpenses,
       net_profit: totalRevenue - totalExpenses,
-      expense_breakdown: breakdownResult.rows.map(row => ({
-        category: row.category,
-        amount: parseFloat(row.total)
-      }))
+      expense_breakdown: [
+        ...breakdownResult.rows.map(row => ({ category: row.category, amount: parseFloat(row.total) })),
+        ...journalExpenseBreakdown,
+      ],
     });
   } catch (error) {
     res.status(500).json({ message: 'Error generating P&L report', error: error.message });
@@ -222,13 +269,51 @@ router.get('/balance-sheet', authMiddleware, async (req, res) => {
     ]);
     const inventory = parseFloat(inventoryR.rows[0].total);
     const receivables = parseFloat(receivablesR.rows[0].total);
-    const retainedEarnings = parseFloat(revenueR.rows[0].total) - parseFloat(expensesR.rows[0].total);
-    const totalAssets = inventory + receivables;
+
+    // Aggregate posted journal movements (all-time) by CoA type so the
+    // balance sheet picks up categorised bank transactions etc.
+    const movements = await getJournalMovements(req.companyId, null, null);
+    let cashLedger = 0;       // signed cash/bank assets from journals
+    let otherAssets = 0;
+    let liabilitiesLedger = 0;
+    let equityLedger = 0;
+    let journalRevenue = 0;
+    let journalExpenses = 0;
+    for (const m of movements) {
+      if (m.type === 'Asset') {
+        const amt = m.debit - m.credit;
+        if (m.code === '1000' || m.code === '1010') cashLedger += amt;
+        else otherAssets += amt;
+      } else if (m.type === 'Liability') {
+        liabilitiesLedger += (m.credit - m.debit);
+      } else if (m.type === 'Equity') {
+        equityLedger += (m.credit - m.debit);
+      } else if (m.type === 'Revenue') {
+        journalRevenue += (m.credit - m.debit);
+      } else if (m.type === 'Expense') {
+        journalExpenses += (m.debit - m.credit);
+      }
+    }
+
+    const retainedEarnings =
+      parseFloat(revenueR.rows[0].total) - parseFloat(expensesR.rows[0].total)
+      + journalRevenue - journalExpenses;
+
+    const totalAssets = inventory + receivables + cashLedger + otherAssets;
+    const totalLiabilities = liabilitiesLedger;
+    const totalEquity = retainedEarnings + equityLedger;
+
     res.json({
-      assets: { accounts_receivable: receivables, inventory, total: totalAssets },
-      liabilities: { accounts_payable: 0, total: 0 },
-      equity: { retained_earnings: retainedEarnings, total: retainedEarnings },
-      total_liabilities_and_equity: retainedEarnings,
+      assets: {
+        accounts_receivable: receivables,
+        inventory,
+        cash: cashLedger,
+        other: otherAssets,
+        total: totalAssets,
+      },
+      liabilities: { accounts_payable: totalLiabilities, total: totalLiabilities },
+      equity: { retained_earnings: retainedEarnings, total: totalEquity },
+      total_liabilities_and_equity: totalLiabilities + totalEquity,
     });
   } catch (error) {
     res.status(500).json({ message: 'Error generating balance sheet', error: error.message });
@@ -245,8 +330,16 @@ router.get('/cash-flow', authMiddleware, async (req, res) => {
     if (start_date) { cashInQ += ` AND invoice_date >= $2`; cashOutQ += ` AND expense_date >= $2`; params.push(start_date); }
     if (end_date) { const p = params.length + 1; cashInQ += ` AND invoice_date <= $${p}`; cashOutQ += ` AND expense_date <= $${p}`; params.push(end_date); }
     const [cashInR, cashOutR] = await Promise.all([pool.query(cashInQ, params), pool.query(cashOutQ, params)]);
-    const cashIn = parseFloat(cashInR.rows[0].total);
-    const cashOut = parseFloat(cashOutR.rows[0].total);
+    let cashIn = parseFloat(cashInR.rows[0].total);
+    let cashOut = parseFloat(cashOutR.rows[0].total);
+
+    // Add categorised bank movements via journal entries.
+    const movements = await getJournalMovements(req.companyId, start_date, end_date);
+    for (const m of movements) {
+      if (m.type === 'Revenue') cashIn  += (m.credit - m.debit);
+      if (m.type === 'Expense') cashOut += (m.debit  - m.credit);
+    }
+
     res.json({
       operating: { cash_from_customers: cashIn, cash_to_suppliers: cashOut, net: cashIn - cashOut },
       investing: { net: 0 },

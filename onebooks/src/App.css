@@ -1884,25 +1884,38 @@ textarea.form-control {
 }
 
 .lv2 {
-  position: fixed;
-  inset: 0;
+  position: relative;
+  min-height: 100vh;
   background: #1a1410;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   font-family: 'DM Sans', sans-serif;
 }
 
-/* ── Background photo ──
-   Default: hosted multiracial corporate photos (Unsplash).
-   To use your own: drop a JPG at onebooks/public/login-hero.jpg and
-   the Login.jsx inline style will prefer it. */
-.lv2-bg {
+/* ── Slideshow (crossfading background photos) ──
+   Each .lv2-slide is absolutely positioned; the active slide fades in
+   while the others fade out. JS toggles the .is-active class on a 3s timer. */
+.lv2-slideshow {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.lv2-slide {
   position: absolute;
   inset: 0;
   background-size: cover;
-  background-position: 35% 28%;
+  background-position: center 30%;
   background-color: #2d2620;
-  animation: kenBurns 24s ease-in-out infinite;
-  will-change: transform;
+  opacity: 0;
+  transition: opacity 1.2s ease-in-out;
+  animation: kenBurns 12s ease-in-out infinite;
+  will-change: opacity, transform;
+}
+
+.lv2-slide.is-active {
+  opacity: 1;
 }
 
 /* Warm gradient fallback when image fails */
@@ -2016,7 +2029,7 @@ textarea.form-control {
 .lv2-main {
   position: relative;
   z-index: 5;
-  height: calc(100vh - 86px);
+  min-height: calc(100vh - 86px);
   display: grid;
   grid-template-columns: 1fr 540px;
   gap: 0;
@@ -2498,8 +2511,6 @@ textarea.form-control {
 }
 
 @media (max-width: 860px) {
-  .lv2 { position: relative; overflow: visible; }
-  .lv2-bg { position: absolute; height: 100%; }
   .lv2-nav-center { display: none; }
   .lv2-nav { padding: 18px 22px; }
   .lv2-main { grid-template-columns: 1fr; padding: 0 16px 24px; height: auto; gap: 16px; }

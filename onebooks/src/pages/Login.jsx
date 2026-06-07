@@ -99,6 +99,24 @@ const CurrencyPicker = ({ value, onChange }) => {
   );
 };
 
+/* ─── Background slideshow images (diverse, global) ──────────── */
+const SLIDESHOW_IMAGES = [
+  // Two people exchanging a high five — team celebration
+  'https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?w=1800&q=85&auto=format&fit=crop',
+  // Professional woman of colour at work
+  'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=1800&q=85&auto=format&fit=crop',
+  // Teamwork — diverse group collaborating
+  'https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=1800&q=85&auto=format&fit=crop',
+  // Computation / data analysis on laptop
+  'https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=1800&q=85&auto=format&fit=crop',
+  // Mixed Arab / Asian / African / European professionals in meeting
+  'https://images.unsplash.com/photo-1521737711867-e3b97375f902?w=1800&q=85&auto=format&fit=crop',
+  // Asian woman developer
+  'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=1800&q=85&auto=format&fit=crop',
+  // African business professional
+  'https://images.unsplash.com/photo-1556157382-97eda2d62296?w=1800&q=85&auto=format&fit=crop',
+];
+
 /* ─── Password strength helper ───────────────────────────────── */
 const evaluatePassword = (pw) => {
   if (!pw) return { score: 0, label: '' };
@@ -129,6 +147,15 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [useDemoMode, setUseDemoMode] = useState(false);
+
+  const [slideIdx, setSlideIdx] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setSlideIdx((i) => (i + 1) % SLIDESHOW_IMAGES.length);
+    }, 3000);
+    return () => clearInterval(id);
+  }, []);
 
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -199,18 +226,15 @@ const Login = () => {
   return (
     <div className="lv2">
       <div className="lv2-bg-fallback" />
-      <div
-        className="lv2-bg"
-        style={{
-          backgroundImage: [
-            'linear-gradient(100deg, rgba(20,16,13,0.55) 0%, rgba(20,16,13,0.18) 45%, rgba(20,16,13,0) 62%)',
-            "url('/login-hero.jpg')",
-            "url('https://images.unsplash.com/photo-1600880292203-757bb62b4baf?w=1800&q=85&auto=format&fit=crop')",
-            "url('https://images.unsplash.com/photo-1556761175-5973dc0f32e7?w=1800&q=85&auto=format&fit=crop')",
-            "url('https://images.unsplash.com/photo-1542744173-8e7e53415bb0?w=1800&q=85&auto=format&fit=crop')",
-          ].join(', '),
-        }}
-      />
+      <div className="lv2-slideshow">
+        {SLIDESHOW_IMAGES.map((src, i) => (
+          <div
+            key={i}
+            className={`lv2-slide ${i === slideIdx ? 'is-active' : ''}`}
+            style={{ backgroundImage: `linear-gradient(100deg, rgba(20,16,13,0.55) 0%, rgba(20,16,13,0.18) 45%, rgba(20,16,13,0) 62%), url('${src}')` }}
+          />
+        ))}
+      </div>
       <div className="lv2-grain" />
       <div className="lv2-vignette" />
 
@@ -315,7 +339,7 @@ const Login = () => {
                       {loading ? <span className="lv2-spinner" /> : 'Sign in'}
                     </button>
                     <button type="button" className="lv2-btn-outline" onClick={() => switchMode('register')}>
-                      Open a checking account
+                      Sign up
                     </button>
                   </div>
                 </form>
