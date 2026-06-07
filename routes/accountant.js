@@ -23,6 +23,7 @@ const DEFAULT_COA = [
   { code:'2300', name:'Deferred Revenue',         type:'Liability', category:'Current Liability',   balance:0 },
   { code:'2500', name:'Long-term Loan',           type:'Liability', category:'Long-term Liability', balance:0 },
   { code:'3000', name:"Owner's Capital",          type:'Equity',    category:'Equity',              balance:0 },
+  { code:'3050', name:'Opening Balance Equity',   type:'Equity',    category:'Equity',              balance:0 },
   { code:'3100', name:'Retained Earnings',        type:'Equity',    category:'Equity',              balance:0 },
   { code:'3200', name:'Drawings',                 type:'Equity',    category:'Equity',              balance:0 },
   { code:'4000', name:'Sales Revenue',            type:'Revenue',   category:'Operating Revenue',   balance:0 },
@@ -49,6 +50,145 @@ async function seedDefaultCOA(companyId, client) {
       [companyId, acc.code, acc.name, acc.type, acc.category, acc.balance]
     );
   }
+}
+
+// ── Auto-generate the next account code for a given type ──────────
+// Asset → 1xxx, Liability → 2xxx, Equity → 3xxx, Revenue → 4xxx, Expense → 5xxx
+const CODE_PREFIX = { Asset: '1', Liability: '2', Equity: '3', Revenue: '4', Expense: '5' };
+
+async function nextAccountCode(client, companyId, type) {
+  const prefix = CODE_PREFIX[type] || '9';
+  const result = await client.query(
+    `SELECT code FROM chart_of_accounts
+     WHERE company_id = $1 AND code LIKE $2
+     ORDER BY code DESC LIMIT 1`,
+    [companyId, prefix + '%']
+  );
+  let next;
+  if (!result.rows.length) {
+    next = parseInt(prefix + '000', 10) + 10;
+  } else {
+    next = parseInt(result.rows[0].code, 10) + 10;
+  }
+  // collision guard
+  while (true) {
+    const exists = await client.query(
+      `SELECT 1 FROM chart_of_accounts WHERE company_id = $1 AND code = $2`,
+      [companyId, String(next)]
+    );
+    if (!exists.rows.length) return String(next);
+    next += 10;
+  }
+}
+
+// ── Opening-balance double entry ──────────────────────────────────
+// When a CoA account is created/updated with an opening balance, post a
+// balanced journal entry against the Opening Balance Equity account so
+// the figure flows into Balance Sheet / Trial Balance via the ledger.
+//
+// Reference: 'OPN-<accountId>'. Re-posted whenever the opening balance
+// changes; removed when the account is deleted.
+
+async function ensureOpeningBalanceEquity(client, companyId) {
+  const existing = await client.query(
+    `SELECT id, code, name, type FROM chart_of_accounts
+     WHERE company_id = $1 AND code = '3050' LIMIT 1`,
+    [companyId]
+  );
+  if (existing.rows.length) return existing.rows[0];
+  const inserted = await client.query(
+    `INSERT INTO chart_of_accounts (company_id, code, name, type, category, balance, is_system)
+     VALUES ($1, '3050', 'Opening Balance Equity', 'Equity', 'Equity', 0, TRUE)
+     ON CONFLICT (company_id, code) DO UPDATE SET updated_at = NOW()
+     RETURNING id, code, name, type`,
+    [companyId]
+  );
+  return inserted.rows[0];
+}
+
+async function deleteOpeningJournal(client, companyId, accountId) {
+  const reference = `OPN-${accountId}`;
+  const existing = await client.query(
+    `SELECT je.id AS journal_id, jl.account_code, jl.type AS line_type, jl.amount
+     FROM journal_entries je
+     LEFT JOIN journal_lines jl ON jl.journal_id = je.id
+     WHERE je.company_id = $1 AND je.reference = $2`,
+    [companyId, reference]
+  );
+  if (!existing.rows.length || !existing.rows[0].journal_id) return;
+  const journalId = existing.rows[0].journal_id;
+
+  for (const ln of existing.rows) {
+    if (!ln.account_code) continue;
+    const accRes = await client.query(
+      `SELECT type FROM chart_of_accounts WHERE company_id = $1 AND code = $2`,
+      [companyId, ln.account_code]
+    );
+    if (!accRes.rows.length) continue;
+    const isDebitNormal = ['Asset', 'Expense'].includes(accRes.rows[0].type);
+    const wasDebit = ln.line_type === 'debit';
+    const delta = (wasDebit === isDebitNormal) ? parseFloat(ln.amount) : -parseFloat(ln.amount);
+    await client.query(
+      `UPDATE chart_of_accounts SET balance = balance - $1, updated_at = NOW()
+       WHERE company_id = $2 AND code = $3`,
+      [delta, companyId, ln.account_code]
+    );
+  }
+  await client.query(`DELETE FROM journal_entries WHERE id = $1`, [journalId]);
+}
+
+async function postOpeningJournal(client, companyId, account, openingBalance, asOfDate) {
+  const amount = parseFloat(openingBalance);
+  if (!amount || isNaN(amount)) return;
+
+  await deleteOpeningJournal(client, companyId, account.id);
+  const obe = await ensureOpeningBalanceEquity(client, companyId);
+  if (!obe || obe.id === account.id) return;  // can't offset OBE against itself
+
+  // Debit-normal accounts (Asset, Expense) get debited for positive opening
+  // balances; credit-normal (Liability, Equity, Revenue) get credited.
+  const isDebitNormal = ['Asset', 'Expense'].includes(account.type);
+  const accSide = (amount >= 0)
+    ? (isDebitNormal ? 'debit' : 'credit')
+    : (isDebitNormal ? 'credit' : 'debit');
+  const obeSide = accSide === 'debit' ? 'credit' : 'debit';
+  const absAmt = Math.abs(amount);
+  const reference = `OPN-${account.id}`;
+  const date = asOfDate || new Date().toISOString().split('T')[0];
+
+  const je = await client.query(
+    `INSERT INTO journal_entries (company_id, reference, date, description, status)
+     VALUES ($1, $2, $3, $4, 'posted') RETURNING id`,
+    [companyId, reference, date, `Opening balance — ${account.name}`]
+  );
+  const journalId = je.rows[0].id;
+
+  await client.query(
+    `INSERT INTO journal_lines (journal_id, account_code, account_name, type, amount)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [journalId, account.code, account.name, accSide, absAmt]
+  );
+  await client.query(
+    `INSERT INTO journal_lines (journal_id, account_code, account_name, type, amount)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [journalId, obe.code, obe.name, obeSide, absAmt]
+  );
+
+  // Apply CoA balance deltas (mirrors journal-post handler).
+  const accIsDebit = accSide === 'debit';
+  const accDelta = (accIsDebit === isDebitNormal) ? absAmt : -absAmt;
+  await client.query(
+    `UPDATE chart_of_accounts SET balance = balance + $1, updated_at = NOW() WHERE id = $2`,
+    [accDelta, account.id]
+  );
+
+  const obeIsDebitNormal = ['Asset', 'Expense'].includes(obe.type);
+  const obeIsDebit = obeSide === 'debit';
+  const obeDelta = (obeIsDebit === obeIsDebitNormal) ? absAmt : -absAmt;
+  await client.query(
+    `UPDATE chart_of_accounts SET balance = balance + $1, updated_at = NOW() WHERE id = $2`,
+    [obeDelta, obe.id]
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -80,47 +220,116 @@ router.get('/accounts', auth, async (req, res) => {
 
 // POST /api/accountant/accounts
 router.post('/accounts', auth, async (req, res) => {
-  const { code, name, type, category, balance = 0 } = req.body;
+  let { code, name, type, category, balance = 0, opening_balance_date } = req.body;
+  const opening = parseFloat(balance) || 0;
+  const client = await pool.connect();
   try {
-    const result = await pool.query(
+    await client.query('BEGIN');
+
+    // Auto-generate the code when blank, based on type.
+    if (!code || !String(code).trim()) {
+      code = await nextAccountCode(client, req.companyId, type);
+    }
+
+    // The opening balance is materialised as a posted journal entry against
+    // Opening Balance Equity, so we insert with balance=0 and let the
+    // journal-posting helper update both sides.
+    const result = await client.query(
       `INSERT INTO chart_of_accounts (company_id, code, name, type, category, balance)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [req.companyId, code, name, type, category, balance]
+       VALUES ($1,$2,$3,$4,$5,0) RETURNING *`,
+      [req.companyId, code, name, type, category]
     );
-    res.status(201).json({ account: result.rows[0] });
+    const account = result.rows[0];
+
+    if (opening !== 0) {
+      await postOpeningJournal(client, req.companyId, account, opening, opening_balance_date);
+    }
+
+    await client.query('COMMIT');
+    // Re-fetch to return the post-journal balance.
+    const fresh = await pool.query(`SELECT * FROM chart_of_accounts WHERE id = $1`, [account.id]);
+    res.status(201).json({ account: fresh.rows[0] });
   } catch (err) {
+    await client.query('ROLLBACK');
     if (err.code === '23505') return res.status(400).json({ message: 'Account code already exists' });
     res.status(500).json({ message: 'Error creating account', error: err.message });
+  } finally {
+    client.release();
   }
 });
 
 // PUT /api/accountant/accounts/:id
 router.put('/accounts/:id', auth, async (req, res) => {
-  const { code, name, type, category, balance } = req.body;
+  const { code, name, type, category, balance, opening_balance_date } = req.body;
+  const newOpening = parseFloat(balance) || 0;
+  const client = await pool.connect();
   try {
-    const result = await pool.query(
-      `UPDATE chart_of_accounts SET code=$1, name=$2, type=$3, category=$4, balance=$5, updated_at=NOW()
-       WHERE id=$6 AND company_id=$7 RETURNING *`,
-      [code, name, type, category, balance, req.params.id, req.companyId]
+    await client.query('BEGIN');
+
+    // Read existing opening-journal amount so we know the delta to re-post.
+    const before = await client.query(
+      `SELECT * FROM chart_of_accounts WHERE id = $1 AND company_id = $2`,
+      [req.params.id, req.companyId]
     );
-    if (!result.rows.length) return res.status(404).json({ message: 'Account not found' });
-    res.json({ account: result.rows[0] });
+    if (!before.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Account not found' });
+    }
+
+    const result = await client.query(
+      `UPDATE chart_of_accounts SET code=$1, name=$2, type=$3, category=$4, updated_at=NOW()
+       WHERE id=$5 AND company_id=$6 RETURNING *`,
+      [code, name, type, category, req.params.id, req.companyId]
+    );
+    const account = result.rows[0];
+
+    // Re-post the opening-balance journal at the new amount. The helper
+    // reverses the previous journal before posting the new one, so the
+    // CoA balance always reflects the intended opening figure.
+    await postOpeningJournal(client, req.companyId, account, newOpening, opening_balance_date);
+
+    await client.query('COMMIT');
+    const fresh = await pool.query(`SELECT * FROM chart_of_accounts WHERE id = $1`, [account.id]);
+    res.json({ account: fresh.rows[0] });
   } catch (err) {
+    await client.query('ROLLBACK');
     res.status(500).json({ message: 'Error updating account', error: err.message });
+  } finally {
+    client.release();
   }
 });
 
 // DELETE /api/accountant/accounts/:id
 router.delete('/accounts/:id', auth, async (req, res) => {
+  const client = await pool.connect();
   try {
-    await pool.query(
+    await client.query('BEGIN');
+    await deleteOpeningJournal(client, req.companyId, req.params.id);
+    await client.query(
       `DELETE FROM chart_of_accounts WHERE id=$1 AND company_id=$2`,
       [req.params.id, req.companyId]
     );
+    await client.query('COMMIT');
     res.json({ message: 'Account deleted' });
   } catch (err) {
+    await client.query('ROLLBACK');
     res.status(500).json({ message: 'Error deleting account', error: err.message });
+  } finally {
+    client.release();
   }
+});
+
+// GET /api/accountant/accounts/next-code?type=Asset
+// Returns the next auto-generated code for the requested type.
+router.get('/accounts/next-code', auth, async (req, res) => {
+  const type = req.query.type || 'Asset';
+  const client = await pool.connect();
+  try {
+    const code = await nextAccountCode(client, req.companyId, type);
+    res.json({ code });
+  } catch (err) {
+    res.status(500).json({ message: 'Error generating code', error: err.message });
+  } finally { client.release(); }
 });
 
 // ═══════════════════════════════════════════════════════════════

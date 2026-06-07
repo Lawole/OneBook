@@ -134,6 +134,7 @@ export const reportAPI = {
   exportProfitLoss: (format, params) => api.get('/reports/profit-loss/export', { params: { format, ...params }, responseType: 'blob' }),
   exportBalanceSheet: (format) => api.get('/reports/balance-sheet/export', { params: { format }, responseType: 'blob' }),
   exportCashFlow: (format, params) => api.get('/reports/cash-flow/export', { params: { format, ...params }, responseType: 'blob' }),
+  getAccountLedger: (code, params) => api.get(`/reports/account-ledger/${encodeURIComponent(code)}`, { params }),
 };
 
 export const accountAPI = {
@@ -141,6 +142,7 @@ export const accountAPI = {
     if (isDemoMode()) return Promise.reject(new Error('Demo mode'));
     return api.get('/accountant/accounts');
   },
+  getNextCode: (type) => api.get('/accountant/accounts/next-code', { params: { type } }),
   create: (data) => api.post('/accountant/accounts', data),
   update: (id, data) => api.put(`/accountant/accounts/${id}`, data),
   delete: (id) => api.delete(`/accountant/accounts/${id}`),

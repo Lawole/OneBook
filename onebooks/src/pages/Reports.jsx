@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from 'react';
-import { Download, TrendingUp, BarChart2, Activity, Users, Package, BookOpen } from 'lucide-react';
+import React, { useState, useCallback, useEffect } from 'react';
+import { Download, TrendingUp, BarChart2, Activity, Users, Package, BookOpen, X } from 'lucide-react';
 import Header from '../components/Header';
 import { reportAPI } from '../services/api';
 import { downloadFile } from '../utils/helpers';
@@ -12,16 +12,120 @@ import {
 
 const isDemoMode = () => localStorage.getItem('demoMode') === 'true';
 
+// ── Drill-down: click any figure tied to a CoA account to open its ledger ──
+const LedgerContext = React.createContext({ open: () => {} });
+
+const LedgerModal = ({ state, onClose, fmt }) => {
+  if (!state) return null;
+  const { loading, error, account, lines, totals, period } = state;
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16,
+    }}>
+      <div style={{
+        background: '#fff', borderRadius: 14, padding: 24, width: '100%',
+        maxWidth: 860, maxHeight: '90vh', overflowY: 'auto',
+        boxShadow: '0 24px 60px rgba(0,0,0,0.25)',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+          <div>
+            <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Account Ledger
+            </div>
+            <h3 style={{ margin: '4px 0 4px' }}>
+              {account ? (
+                <>
+                  <span style={{ fontFamily: 'monospace', color: '#64748b', marginRight: 8 }}>{account.code}</span>
+                  {account.name}
+                </>
+              ) : (loading ? 'Loading…' : 'Ledger')}
+            </h3>
+            {account && (
+              <div style={{ fontSize: 13, color: '#64748b' }}>
+                {account.type} · {account.category}
+                {period && period.start_date && period.end_date && (
+                  <span> · {period.start_date} to {period.end_date}</span>
+                )}
+              </div>
+            )}
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', padding: 4 }}>
+            <X size={20} />
+          </button>
+        </div>
+
+        {loading && (
+          <div style={{ textAlign: 'center', padding: '48px 0', color: '#94a3b8' }}>Loading ledger…</div>
+        )}
+        {error && (
+          <div style={{ background: '#fee2e2', color: '#991b1b', padding: '10px 14px', borderRadius: 8, marginBottom: 12 }}>
+            {error}
+          </div>
+        )}
+        {!loading && !error && lines && lines.length === 0 && (
+          <div style={{ textAlign: 'center', padding: '36px 0', color: '#94a3b8' }}>
+            No journal lines for this account in the selected period.
+          </div>
+        )}
+        {!loading && !error && lines && lines.length > 0 && (
+          <table className="table" style={{ width: '100%' }}>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Reference</th>
+                <th>Description</th>
+                <th className="text-right">Debit</th>
+                <th className="text-right">Credit</th>
+                <th className="text-right">Running</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((l, i) => (
+                <tr key={i}>
+                  <td style={{ whiteSpace: 'nowrap' }}>{l.date && String(l.date).split('T')[0]}</td>
+                  <td style={{ fontFamily: 'monospace', color: '#64748b' }}>{l.reference}</td>
+                  <td style={{ color: '#475569' }}>{l.description}</td>
+                  <td className="text-right" style={{ color: '#3b82f6' }}>{l.debit ? fmt(l.debit) : '—'}</td>
+                  <td className="text-right" style={{ color: '#ef4444' }}>{l.credit ? fmt(l.credit) : '—'}</td>
+                  <td className="text-right" style={{ fontWeight: 600 }}>{fmt(l.running_balance)}</td>
+                </tr>
+              ))}
+            </tbody>
+            {totals && (
+              <tfoot>
+                <tr style={{ fontWeight: 700, borderTop: '2px solid #1e293b', background: '#f8fafc' }}>
+                  <td colSpan={3}>Totals</td>
+                  <td className="text-right" style={{ color: '#3b82f6' }}>{fmt(totals.debit)}</td>
+                  <td className="text-right" style={{ color: '#ef4444' }}>{fmt(totals.credit)}</td>
+                  <td className="text-right">{fmt(totals.balance)}</td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        )}
+        <div style={{ textAlign: 'right', marginTop: 16 }}>
+          <button className="btn btn-outline" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const SectionTitle = ({ children }) => (
   <div style={{ fontWeight: 700, fontSize: 13, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', padding: '14px 0 6px' }}>
     {children}
   </div>
 );
 
-const Row = ({ label, value, prev, bold, color, indent, fmt }) => {
+const Row = ({ label, value, prev, bold, color, indent, fmt, accountCode }) => {
   const hasPrev = prev !== undefined && prev !== null;
   const variance = hasPrev ? value - prev : 0;
   const variancePct = hasPrev && prev !== 0 ? (variance / Math.abs(prev)) * 100 : 0;
+  const { open } = React.useContext(LedgerContext);
+  const clickable = !!accountCode;
+  const handleClick = clickable ? () => open(accountCode) : undefined;
+  const valueColor = color || (value < 0 ? '#ef4444' : (clickable ? '#4f46e5' : '#1e293b'));
   return (
     <div style={{
       display: 'grid',
@@ -33,12 +137,31 @@ const Row = ({ label, value, prev, bold, color, indent, fmt }) => {
       paddingLeft: indent ? 20 : 0,
     }}>
       <span style={{ fontWeight: bold ? 700 : 400, color: color || '#334155', fontSize: 14 }}>{label}</span>
-      <span style={{ textAlign: 'right', fontWeight: bold ? 700 : 500, color: color || (value < 0 ? '#ef4444' : '#1e293b'), fontSize: 14 }}>
+      <span
+        onClick={handleClick}
+        title={clickable ? `Open ledger for ${accountCode}` : undefined}
+        style={{
+          textAlign: 'right',
+          fontWeight: bold ? 700 : 500,
+          color: valueColor,
+          fontSize: 14,
+          cursor: clickable ? 'pointer' : 'default',
+          textDecoration: clickable ? 'underline dotted' : 'none',
+          textDecorationThickness: '1px',
+          textUnderlineOffset: '3px',
+        }}
+      >
         {fmt(value)}
       </span>
       {hasPrev && (
         <>
-          <span style={{ textAlign: 'right', fontWeight: bold ? 700 : 500, color: '#64748b', fontSize: 14 }}>
+          <span
+            onClick={handleClick}
+            style={{
+              textAlign: 'right', fontWeight: bold ? 700 : 500, color: '#64748b', fontSize: 14,
+              cursor: clickable ? 'pointer' : 'default',
+            }}
+          >
             {fmt(prev)}
           </span>
           <span style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, color: variance >= 0 ? '#16a34a' : '#dc2626' }}>
@@ -117,6 +240,7 @@ const ProfitLossReport = ({ data, prev, dates, prevDates, fmt }) => {
           label={item.category.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
           value={item.amount}
           prev={prev ? lookupPrev(item.category) : undefined}
+          accountCode={item.account_code}
           indent />
       ))}
       <Row fmt={fmt} label="Total Expenses" value={data.total_expenses} prev={prev?.total_expenses} bold />
@@ -128,34 +252,58 @@ const ProfitLossReport = ({ data, prev, dates, prevDates, fmt }) => {
   );
 };
 
-const BalanceSheetReport = ({ data, prev, fmt }) => (
-  <div>
-    <div style={{ fontWeight: 700, fontSize: 18, color: '#1e293b', marginBottom: 20 }}>Balance Sheet</div>
-    {prev && <ColumnHeader currentLabel="Current" prevLabel="Previous" />}
-    <SectionTitle>Assets</SectionTitle>
-    <Row fmt={fmt} label="Accounts Receivable" value={data.assets.accounts_receivable} prev={prev?.assets?.accounts_receivable} indent />
-    <Row fmt={fmt} label="Inventory" value={data.assets.inventory} prev={prev?.assets?.inventory} indent />
-    {data.assets.cash !== undefined && (
-      <Row fmt={fmt} label="Cash / Bank" value={data.assets.cash} prev={prev?.assets?.cash} indent />
-    )}
-    {data.assets.other !== undefined && data.assets.other !== 0 && (
-      <Row fmt={fmt} label="Other Assets" value={data.assets.other} prev={prev?.assets?.other} indent />
-    )}
-    <Row fmt={fmt} label="Total Assets" value={data.assets.total} prev={prev?.assets?.total} bold />
-    <SectionTitle>Liabilities</SectionTitle>
-    <Row fmt={fmt} label="Accounts Payable" value={data.liabilities.accounts_payable} prev={prev?.liabilities?.accounts_payable} indent />
-    <Row fmt={fmt} label="Total Liabilities" value={data.liabilities.total} prev={prev?.liabilities?.total} bold />
-    <SectionTitle>Equity</SectionTitle>
-    <Row fmt={fmt} label="Retained Earnings" value={data.equity.retained_earnings} prev={prev?.equity?.retained_earnings} indent />
-    <Row fmt={fmt} label="Total Equity" value={data.equity.total} prev={prev?.equity?.total} bold />
-    <div style={{ marginTop: 16, borderTop: '2px solid #e2e8f0', paddingTop: 12 }}>
-      <Row fmt={fmt} label="TOTAL LIABILITIES & EQUITY"
-        value={data.liabilities.total + data.equity.total}
-        prev={prev ? (prev.liabilities.total + prev.equity.total) : undefined}
-        bold />
+const BalanceSheetReport = ({ data, prev, fmt }) => {
+  const findPrev = (list, code) => {
+    if (!prev || !list) return undefined;
+    const m = list.find(x => x.code === code);
+    return m ? m.balance : 0;
+  };
+  return (
+    <div>
+      <div style={{ fontWeight: 700, fontSize: 18, color: '#1e293b', marginBottom: 20 }}>Balance Sheet</div>
+      {prev && <ColumnHeader currentLabel="Current" prevLabel="Previous" />}
+      <SectionTitle>Assets</SectionTitle>
+      <Row fmt={fmt} label="Accounts Receivable" value={data.assets.accounts_receivable} prev={prev?.assets?.accounts_receivable} indent />
+      <Row fmt={fmt} label="Inventory" value={data.assets.inventory} prev={prev?.assets?.inventory} indent />
+      {(data.assets.accounts || []).filter(a => a.balance !== 0).map(a => (
+        <Row fmt={fmt} key={a.code}
+          label={`${a.code} — ${a.name}`}
+          value={a.balance}
+          prev={prev ? findPrev(prev.assets?.accounts, a.code) : undefined}
+          accountCode={a.code}
+          indent />
+      ))}
+      <Row fmt={fmt} label="Total Assets" value={data.assets.total} prev={prev?.assets?.total} bold />
+      <SectionTitle>Liabilities</SectionTitle>
+      {(data.liabilities.accounts || []).filter(a => a.balance !== 0).map(a => (
+        <Row fmt={fmt} key={a.code}
+          label={`${a.code} — ${a.name}`}
+          value={a.balance}
+          prev={prev ? findPrev(prev.liabilities?.accounts, a.code) : undefined}
+          accountCode={a.code}
+          indent />
+      ))}
+      <Row fmt={fmt} label="Total Liabilities" value={data.liabilities.total} prev={prev?.liabilities?.total} bold />
+      <SectionTitle>Equity</SectionTitle>
+      {(data.equity.accounts || []).filter(a => a.balance !== 0).map(a => (
+        <Row fmt={fmt} key={a.code}
+          label={`${a.code} — ${a.name}`}
+          value={a.balance}
+          prev={prev ? findPrev(prev.equity?.accounts, a.code) : undefined}
+          accountCode={a.code}
+          indent />
+      ))}
+      <Row fmt={fmt} label="Retained Earnings" value={data.equity.retained_earnings} prev={prev?.equity?.retained_earnings} indent />
+      <Row fmt={fmt} label="Total Equity" value={data.equity.total} prev={prev?.equity?.total} bold />
+      <div style={{ marginTop: 16, borderTop: '2px solid #e2e8f0', paddingTop: 12 }}>
+        <Row fmt={fmt} label="TOTAL LIABILITIES & EQUITY"
+          value={data.liabilities.total + data.equity.total}
+          prev={prev ? (prev.liabilities.total + prev.equity.total) : undefined}
+          bold />
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 const CashFlowReport = ({ data, prev, dates, prevDates, fmt }) => (
   <div>
@@ -293,6 +441,7 @@ const TrialBalanceReport = ({ data, dates, fmt }) => {
   const accounts = data.accounts || [];
   const { debit: totalDebit, credit: totalCredit } = data.totals || {};
   const balanced = totalDebit === totalCredit;
+  const { open } = React.useContext(LedgerContext);
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
@@ -327,7 +476,7 @@ const TrialBalanceReport = ({ data, dates, fmt }) => {
         </thead>
         <tbody>
           {accounts.map((r, i) => (
-            <tr key={i}>
+            <tr key={i} onClick={() => open(r.code)} style={{ cursor: 'pointer' }} title={`Open ledger for ${r.code}`}>
               <td style={{ fontFamily: 'monospace', color: '#64748b' }}>{r.code}</td>
               <td className="font-medium">{r.name}</td>
               <td>
@@ -335,8 +484,8 @@ const TrialBalanceReport = ({ data, dates, fmt }) => {
                   {r.type}
                 </span>
               </td>
-              <td className="text-right">{r.debit > 0 ? fmt(r.debit) : '—'}</td>
-              <td className="text-right">{r.credit > 0 ? fmt(r.credit) : '—'}</td>
+              <td className="text-right" style={{ color: r.debit  > 0 ? '#4f46e5' : '#94a3b8', textDecoration: r.debit  > 0 ? 'underline dotted' : 'none' }}>{r.debit > 0 ? fmt(r.debit) : '—'}</td>
+              <td className="text-right" style={{ color: r.credit > 0 ? '#4f46e5' : '#94a3b8', textDecoration: r.credit > 0 ? 'underline dotted' : 'none' }}>{r.credit > 0 ? fmt(r.credit) : '—'}</td>
             </tr>
           ))}
         </tbody>
@@ -451,6 +600,35 @@ const Reports = () => {
   const [prevData, setPrevData] = useState(null);
   const [prevDates, setPrevDates] = useState({ start: '', end: '' });
   const [error, setError] = useState('');
+  const [ledger, setLedger] = useState(null); // { loading, error, account, lines, totals, period }
+
+  const openLedger = useCallback(async (code) => {
+    if (!code) return;
+    const params = {};
+    if (startDate) params.start_date = startDate;
+    if (endDate)   params.end_date = endDate;
+    setLedger({ loading: true, error: '', account: null, lines: null, totals: null, period: null });
+    try {
+      const res = await reportAPI.getAccountLedger(code, params);
+      setLedger({ loading: false, error: '', ...res.data });
+    } catch (err) {
+      setLedger({
+        loading: false,
+        error: err.response?.data?.message || 'Unable to load ledger',
+        account: null, lines: [], totals: null, period: null,
+      });
+    }
+  }, [startDate, endDate]);
+
+  const closeLedger = useCallback(() => setLedger(null), []);
+
+  // Close the ledger on Esc.
+  useEffect(() => {
+    if (!ledger) return undefined;
+    const h = (e) => { if (e.key === 'Escape') closeLedger(); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [ledger, closeLedger]);
 
   const applyPreset = (key) => {
     const { start, end } = computePreset(key);
@@ -528,6 +706,7 @@ const Reports = () => {
   }, [reportType, startDate, endDate]);
 
   return (
+    <LedgerContext.Provider value={{ open: openLedger }}>
     <div className="page">
       <Header title="Reports" subtitle="Generate and export financial reports" />
       <div className="page-content">
@@ -658,7 +837,9 @@ const Reports = () => {
         </div>
 
       </div>
+      <LedgerModal state={ledger} onClose={closeLedger} fmt={fmt} />
     </div>
+    </LedgerContext.Provider>
   );
 };
 

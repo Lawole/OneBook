@@ -18,6 +18,28 @@ const TYPE_COLORS = {
   Asset: '#3b82f6', Liability: '#ef4444', Equity: '#8b5cf6', Revenue: '#10b981', Expense: '#f59e0b',
 };
 
+// Standard sub-account categories per account type. Surfaced as a
+// dropdown when creating / editing an account.
+const CATEGORIES_BY_TYPE = {
+  Asset:     ['Current Asset', 'Fixed Asset', 'Intangible Asset', 'Other Asset'],
+  Liability: ['Current Liability', 'Long-term Liability', 'Other Liability'],
+  Equity:    ['Equity'],
+  Revenue:   ['Operating Revenue', 'Other Revenue'],
+  Expense:   ['Cost of Sales', 'Operating Expense', 'Depreciation', 'Amortisation', 'Finance Cost', 'Other Expense'],
+};
+
+// Local fallback for next code if backend is unreachable (demo mode).
+const CODE_PREFIX = { Asset: '1', Liability: '2', Equity: '3', Revenue: '4', Expense: '5' };
+const localNextCode = (accounts, type) => {
+  const prefix = CODE_PREFIX[type] || '9';
+  const used = accounts
+    .filter(a => String(a.code).startsWith(prefix))
+    .map(a => parseInt(a.code, 10))
+    .filter(n => !isNaN(n))
+    .sort((a, b) => b - a);
+  return String(used.length ? used[0] + 10 : parseInt(prefix + '010', 10));
+};
+
 const TypeBadge = ({ type }) => (
   <span style={{
     background: (TYPE_COLORS[type] || '#64748b') + '18',
@@ -46,7 +68,7 @@ const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov
 // Chart of Accounts Tab
 // ─────────────────────────────────────────────────────────────────────────────
 
-const blankAccount = { code: '', name: '', type: 'Asset', category: '', balance: '' };
+const blankAccount = { code: '', name: '', type: 'Asset', category: 'Current Asset', balance: '', opening_balance_date: new Date().toISOString().split('T')[0] };
 
 const ChartOfAccountsTab = ({ fmt }) => {
   const [accounts, setAccounts] = useState([]);
@@ -70,19 +92,48 @@ const ChartOfAccountsTab = ({ fmt }) => {
     return matchQ && matchT;
   });
 
-  const openCreate = () => { setForm(blankAccount); setError(''); setModal('create'); };
-  const openEdit = (a) => { setForm({ ...a }); setError(''); setModal('edit'); };
+  const openCreate = async () => {
+    const initialType = 'Asset';
+    const initialCategory = CATEGORIES_BY_TYPE[initialType][0];
+    let code = localNextCode(accounts, initialType);
+    try { const res = await accountAPI.getNextCode(initialType); if (res?.data?.code) code = res.data.code; } catch { /* demo */ }
+    setForm({ ...blankAccount, type: initialType, category: initialCategory, code });
+    setError('');
+    setModal('create');
+  };
+  const openEdit = (a) => {
+    setForm({
+      ...a,
+      category: a.category || CATEGORIES_BY_TYPE[a.type]?.[0] || '',
+      opening_balance_date: a.opening_balance_date || new Date().toISOString().split('T')[0],
+    });
+    setError('');
+    setModal('edit');
+  };
+
+  // When the user switches type during create, refresh both code and category.
+  const handleTypeChange = async (newType) => {
+    const cat = CATEGORIES_BY_TYPE[newType]?.[0] || '';
+    let code = form.code;
+    if (modal === 'create') {
+      code = localNextCode(accounts, newType);
+      try { const res = await accountAPI.getNextCode(newType); if (res?.data?.code) code = res.data.code; } catch { /* demo */ }
+    }
+    setForm(f => ({ ...f, type: newType, category: cat, code }));
+  };
 
   const handleSave = async (e) => {
     e.preventDefault();
     setSaving(true); setError('');
     try {
       if (modal === 'create') {
-        await accountAPI.create(form);
-        setAccounts((prev) => [...prev, { ...form, id: Date.now(), balance: parseFloat(form.balance) || 0 }]);
+        const res = await accountAPI.create(form);
+        const created = res?.data?.account || { ...form, id: Date.now(), balance: parseFloat(form.balance) || 0 };
+        setAccounts((prev) => [...prev, created]);
       } else {
-        await accountAPI.update(form.id, form);
-        setAccounts((prev) => prev.map((a) => a.id === form.id ? { ...form, balance: parseFloat(form.balance) || 0 } : a));
+        const res = await accountAPI.update(form.id, form);
+        const updated = res?.data?.account || { ...form, balance: parseFloat(form.balance) || 0 };
+        setAccounts((prev) => prev.map((a) => a.id === form.id ? updated : a));
       }
       setModal(null);
     } catch {
@@ -150,30 +201,47 @@ const ChartOfAccountsTab = ({ fmt }) => {
             <form onSubmit={handleSave}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div className="form-group">
-                  <label>Account Code *</label>
-                  <input className="form-control" required value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="e.g. 1100" />
+                  <label>Account Code <span style={{ color: '#94a3b8', fontWeight: 400, fontSize: 12 }}>(auto-generated)</span></label>
+                  <input
+                    className="form-control"
+                    value={form.code}
+                    onChange={(e) => setForm({ ...form, code: e.target.value })}
+                    readOnly={modal === 'create'}
+                    style={modal === 'create' ? { background: '#f1f5f9', color: '#475569', fontFamily: 'monospace' } : { fontFamily: 'monospace' }}
+                  />
                 </div>
                 <div className="form-group">
                   <label>Type *</label>
-                  <select className="form-control" required value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
+                  <select className="form-control" required value={form.type} onChange={(e) => handleTypeChange(e.target.value)}>
                     {ACCOUNT_TYPES.map((t) => <option key={t}>{t}</option>)}
                   </select>
                 </div>
               </div>
               <div className="form-group">
                 <label>Account Name *</label>
-                <input className="form-control" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Accounts Receivable" />
+                <input className="form-control" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Motor Vehicle" />
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div className="form-group">
-                  <label>Category</label>
-                  <input className="form-control" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} placeholder="e.g. Current Asset" />
+                  <label>Sub-category *</label>
+                  <select className="form-control" required value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+                    {(CATEGORIES_BY_TYPE[form.type] || []).map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
                 </div>
                 <div className="form-group">
                   <label>Opening Balance</label>
                   <input className="form-control" type="number" step="0.01" value={form.balance} onChange={(e) => setForm({ ...form, balance: e.target.value })} placeholder="0.00" />
                 </div>
               </div>
+              {parseFloat(form.balance) ? (
+                <div className="form-group">
+                  <label>Opening Balance Date</label>
+                  <input className="form-control" type="date" value={form.opening_balance_date} onChange={(e) => setForm({ ...form, opening_balance_date: e.target.value })} />
+                  <div style={{ fontSize: 11.5, color: '#64748b', marginTop: 6 }}>
+                    Offsets Opening Balance Equity (3050) to keep the books in double-entry.
+                  </div>
+                </div>
+              ) : null}
               {error && <div style={{ color: '#dc2626', fontSize: 13, marginBottom: 12 }}>{error}</div>}
               <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
                 <button type="button" className="btn btn-outline" onClick={() => setModal(null)}>Cancel</button>

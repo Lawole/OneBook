@@ -94,7 +94,7 @@ router.get('/profit-loss', authMiddleware, async (req, res) => {
         const amt = m.debit - m.credit;
         journalExpenses += amt;
         if (amt !== 0) {
-          journalExpenseBreakdown.push({ category: m.name, amount: amt });
+          journalExpenseBreakdown.push({ category: m.name, amount: amt, account_code: m.code });
         }
       }
     }
@@ -259,64 +259,140 @@ router.get('/profit-loss/export', authMiddleware, async (req, res) => {
 });
 
 // Balance Sheet - JSON view
+// The CoA.balance field is maintained by every posted journal (invoices,
+// expenses, bank categorisations, opening balances, manual journals), so we
+// derive the Balance Sheet directly from it. We also surface invoice/expense
+// activity that isn't yet journalised so AR/AP stay current.
 router.get('/balance-sheet', authMiddleware, async (req, res) => {
   try {
-    const [inventoryR, receivablesR, revenueR, expensesR] = await Promise.all([
+    const [coaR, inventoryR, receivablesR, revenueR, expensesR] = await Promise.all([
+      pool.query(
+        `SELECT id, code, name, type, category, COALESCE(balance, 0) as balance
+         FROM chart_of_accounts WHERE company_id = $1 ORDER BY code ASC`,
+        [req.companyId]
+      ),
       pool.query(`SELECT COALESCE(SUM(unit_price * quantity_on_hand), 0) as total FROM items WHERE company_id = $1`, [req.companyId]),
       pool.query(`SELECT COALESCE(SUM(total_amount), 0) as total FROM invoices WHERE company_id = $1 AND status IN ('sent', 'overdue', 'unpaid')`, [req.companyId]),
       pool.query(`SELECT COALESCE(SUM(total_amount), 0) as total FROM invoices WHERE company_id = $1 AND status = 'paid'`, [req.companyId]),
       pool.query(`SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE company_id = $1`, [req.companyId]),
     ]);
-    const inventory = parseFloat(inventoryR.rows[0].total);
-    const receivables = parseFloat(receivablesR.rows[0].total);
 
-    // Aggregate posted journal movements (all-time) by CoA type so the
-    // balance sheet picks up categorised bank transactions etc.
-    const movements = await getJournalMovements(req.companyId, null, null);
-    let cashLedger = 0;       // signed cash/bank assets from journals
-    let otherAssets = 0;
-    let liabilitiesLedger = 0;
-    let equityLedger = 0;
-    let journalRevenue = 0;
-    let journalExpenses = 0;
-    for (const m of movements) {
-      if (m.type === 'Asset') {
-        const amt = m.debit - m.credit;
-        if (m.code === '1000' || m.code === '1010') cashLedger += amt;
-        else otherAssets += amt;
-      } else if (m.type === 'Liability') {
-        liabilitiesLedger += (m.credit - m.debit);
-      } else if (m.type === 'Equity') {
-        equityLedger += (m.credit - m.debit);
-      } else if (m.type === 'Revenue') {
-        journalRevenue += (m.credit - m.debit);
-      } else if (m.type === 'Expense') {
-        journalExpenses += (m.debit - m.credit);
-      }
+    const inventory   = parseFloat(inventoryR.rows[0].total);
+    const receivables = parseFloat(receivablesR.rows[0].total);
+    const paidRevenue = parseFloat(revenueR.rows[0].total);
+    const totalExpenses = parseFloat(expensesR.rows[0].total);
+
+    // Break down every CoA account so the Balance Sheet itemises Motor
+    // Vehicle, Land, Loans, etc. — each account shows its current balance.
+    const assetAccounts = [];
+    const liabilityAccounts = [];
+    const equityAccounts = [];
+    let assetTotal = 0, liabilityTotal = 0, equityTotal = 0, ledgerRevenue = 0, ledgerExpense = 0;
+
+    for (const row of coaR.rows) {
+      const bal = parseFloat(row.balance);
+      const entry = { id: row.id, code: row.code, name: row.name, category: row.category, balance: bal };
+      if (row.type === 'Asset')     { assetAccounts.push(entry);     assetTotal     += bal; }
+      else if (row.type === 'Liability') { liabilityAccounts.push(entry); liabilityTotal += bal; }
+      else if (row.type === 'Equity')    { equityAccounts.push(entry);    equityTotal    += bal; }
+      else if (row.type === 'Revenue')   { ledgerRevenue += bal; }
+      else if (row.type === 'Expense')   { ledgerExpense += bal; }
     }
 
-    const retainedEarnings =
-      parseFloat(revenueR.rows[0].total) - parseFloat(expensesR.rows[0].total)
-      + journalRevenue - journalExpenses;
-
-    const totalAssets = inventory + receivables + cashLedger + otherAssets;
-    const totalLiabilities = liabilitiesLedger;
-    const totalEquity = retainedEarnings + equityLedger;
+    // Add inventory/receivables that live outside the journal system so the
+    // sheet stays current even when invoices haven't been posted as journals.
+    const totalAssets      = assetTotal + inventory + receivables;
+    const totalLiabilities = liabilityTotal;
+    const retainedEarnings = paidRevenue - totalExpenses + ledgerRevenue - ledgerExpense;
+    const totalEquity      = equityTotal + retainedEarnings;
 
     res.json({
       assets: {
         accounts_receivable: receivables,
         inventory,
-        cash: cashLedger,
-        other: otherAssets,
+        accounts: assetAccounts,
         total: totalAssets,
       },
-      liabilities: { accounts_payable: totalLiabilities, total: totalLiabilities },
-      equity: { retained_earnings: retainedEarnings, total: totalEquity },
+      liabilities: {
+        accounts_payable: liabilityTotal,
+        accounts: liabilityAccounts,
+        total: totalLiabilities,
+      },
+      equity: {
+        retained_earnings: retainedEarnings,
+        accounts: equityAccounts,
+        total: totalEquity,
+      },
       total_liabilities_and_equity: totalLiabilities + totalEquity,
     });
   } catch (error) {
     res.status(500).json({ message: 'Error generating balance sheet', error: error.message });
+  }
+});
+
+// Account Ledger - drill-down endpoint
+// Returns every journal line that touched an account, with a running balance.
+// Reports use this to power the click-to-drill-down on any figure.
+router.get('/account-ledger/:code', authMiddleware, async (req, res) => {
+  const { code } = req.params;
+  const { start_date, end_date } = req.query;
+  try {
+    const accountR = await pool.query(
+      `SELECT id, code, name, type, category, COALESCE(balance, 0) as balance
+       FROM chart_of_accounts WHERE company_id = $1 AND code = $2`,
+      [req.companyId, code]
+    );
+    if (!accountR.rows.length) {
+      return res.status(404).json({ message: 'Account not found' });
+    }
+    const account = accountR.rows[0];
+
+    const params = [req.companyId, code];
+    let filter = '';
+    if (start_date) { filter += ` AND je.date >= $${params.length + 1}`; params.push(start_date); }
+    if (end_date)   { filter += ` AND je.date <= $${params.length + 1}`; params.push(end_date); }
+
+    const linesR = await pool.query(`
+      SELECT je.id AS journal_id, je.reference, je.date, je.description,
+             jl.type, jl.amount
+      FROM journal_lines jl
+      JOIN journal_entries je ON jl.journal_id = je.id
+      WHERE je.company_id = $1 AND je.status = 'posted'
+        AND jl.account_code = $2 ${filter}
+      ORDER BY je.date ASC, je.id ASC, jl.id ASC
+    `, params);
+
+    const isDebitNormal = ['Asset', 'Expense'].includes(account.type);
+    let running = 0;
+    const lines = linesR.rows.map(r => {
+      const debit  = r.type === 'debit'  ? parseFloat(r.amount) : 0;
+      const credit = r.type === 'credit' ? parseFloat(r.amount) : 0;
+      running += (isDebitNormal ? (debit - credit) : (credit - debit));
+      return {
+        journal_id: r.journal_id,
+        reference: r.reference,
+        date: r.date,
+        description: r.description,
+        debit, credit,
+        running_balance: running,
+      };
+    });
+
+    const totalDebit  = lines.reduce((s, l) => s + l.debit,  0);
+    const totalCredit = lines.reduce((s, l) => s + l.credit, 0);
+
+    res.json({
+      account,
+      lines,
+      totals: {
+        debit: totalDebit,
+        credit: totalCredit,
+        balance: parseFloat(account.balance),
+      },
+      period: { start_date: start_date || null, end_date: end_date || null },
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error generating account ledger', error: error.message });
   }
 });
 
@@ -634,55 +710,67 @@ router.get('/sales-by-item', authMiddleware, async (req, res) => {
 });
 
 // ── Trial Balance ─────────────────────────────────────────────────────────────
+// CoA.balance is the canonical, journal-maintained ending balance. When a
+// date range is supplied we filter to journal-line movements within that
+// period; otherwise we report the as-of-now balances directly from CoA.
 router.get('/trial-balance', authMiddleware, async (req, res) => {
   const { start_date, end_date } = req.query;
   try {
-    // Fetch all chart of accounts entries, then compute balances from transactions
     const coaResult = await pool.query(
-      `SELECT id, code, name, type, balance FROM chart_of_accounts
+      `SELECT id, code, name, type, COALESCE(balance, 0) AS balance FROM chart_of_accounts
        WHERE company_id = $1 ORDER BY code ASC`,
       [req.companyId]
     );
 
-    // Overlay live movement from journal lines for the period
-    let params = [req.companyId];
-    let dateFilter = '';
-    if (start_date) { dateFilter += ` AND je.date >= $${params.length + 1}`; params.push(start_date); }
-    if (end_date)   { dateFilter += ` AND je.date <= $${params.length + 1}`; params.push(end_date); }
+    let accounts;
+    if (start_date || end_date) {
+      const params = [req.companyId];
+      let dateFilter = '';
+      if (start_date) { dateFilter += ` AND je.date >= $${params.length + 1}`; params.push(start_date); }
+      if (end_date)   { dateFilter += ` AND je.date <= $${params.length + 1}`; params.push(end_date); }
 
-    const journalResult = await pool.query(`
-      SELECT jl.account_code,
-             SUM(CASE WHEN jl.type = 'debit'  THEN jl.amount ELSE 0 END) AS journal_debit,
-             SUM(CASE WHEN jl.type = 'credit' THEN jl.amount ELSE 0 END) AS journal_credit
-      FROM journal_lines jl
-      JOIN journal_entries je ON jl.journal_id = je.id
-      WHERE je.company_id = $1 AND je.status = 'posted' ${dateFilter}
-      GROUP BY jl.account_code
-    `, params);
+      const journalResult = await pool.query(`
+        SELECT jl.account_code,
+               SUM(CASE WHEN jl.type = 'debit'  THEN jl.amount ELSE 0 END) AS journal_debit,
+               SUM(CASE WHEN jl.type = 'credit' THEN jl.amount ELSE 0 END) AS journal_credit
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.journal_id = je.id
+        WHERE je.company_id = $1 AND je.status = 'posted' ${dateFilter}
+        GROUP BY jl.account_code
+      `, params);
 
-    const journalMap = {};
-    journalResult.rows.forEach(r => {
-      journalMap[r.account_code] = {
-        debit:  parseFloat(r.journal_debit),
-        credit: parseFloat(r.journal_credit),
-      };
-    });
+      const journalMap = {};
+      journalResult.rows.forEach(r => {
+        journalMap[r.account_code] = {
+          debit:  parseFloat(r.journal_debit),
+          credit: parseFloat(r.journal_credit),
+        };
+      });
 
-    // Build accounts array: debit-normal types (Asset, Expense) show on left; credit-normal on right
-    const accounts = coaResult.rows.map(row => {
-      const jd = journalMap[row.code]?.debit  || 0;
-      const jc = journalMap[row.code]?.credit || 0;
-      const base = parseFloat(row.balance);
-      const isDebitNormal = ['Asset','Expense'].includes(row.type);
-      const netBalance = base + jd - jc;
-      return {
-        code:   row.code,
-        name:   row.name,
-        type:   row.type,
-        debit:  isDebitNormal  && netBalance > 0 ? netBalance : 0,
-        credit: !isDebitNormal && netBalance > 0 ? netBalance : 0,
-      };
-    });
+      accounts = coaResult.rows.map(row => {
+        const jd = journalMap[row.code]?.debit  || 0;
+        const jc = journalMap[row.code]?.credit || 0;
+        const isDebitNormal = ['Asset', 'Expense'].includes(row.type);
+        const netBalance = isDebitNormal ? (jd - jc) : (jc - jd);
+        return {
+          code:   row.code,
+          name:   row.name,
+          type:   row.type,
+          debit:  isDebitNormal  && netBalance > 0 ? netBalance  : 0,
+          credit: !isDebitNormal && netBalance > 0 ? netBalance  : 0,
+        };
+      });
+    } else {
+      accounts = coaResult.rows.map(row => {
+        const bal = parseFloat(row.balance);
+        const isDebitNormal = ['Asset', 'Expense'].includes(row.type);
+        return {
+          code: row.code, name: row.name, type: row.type,
+          debit:  isDebitNormal  && bal > 0 ? bal : 0,
+          credit: !isDebitNormal && bal > 0 ? bal : 0,
+        };
+      });
+    }
 
     const totalDebit  = accounts.reduce((s, a) => s + a.debit,  0);
     const totalCredit = accounts.reduce((s, a) => s + a.credit, 0);
