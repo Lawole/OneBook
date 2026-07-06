@@ -50,9 +50,13 @@ router.get('/', authMiddleware, async (req, res) => {
 
 // Create vendor
 router.post('/', authMiddleware, async (req, res) => {
-  const { name, email, company_name, phone, address, currency_id } = req.body;
+  const { name, email, company_name, phone, address } = req.body;
 
   try {
+    // Uniform currency: always use the company's base currency
+    const { getBaseCurrencyId } = require('../config/currency');
+    const currency_id = await getBaseCurrencyId(req.companyId);
+
     const result = await pool.query(
       `INSERT INTO vendors (company_id, name, email, company_name, phone, address, currency_id, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW()) RETURNING *`,
@@ -64,17 +68,24 @@ router.post('/', authMiddleware, async (req, res) => {
       vendor: result.rows[0]
     });
   } catch (error) {
-    res.status(500).json({ message: 'Error creating vendor', error: error.message });
+    res.status(500).json({
+      message: 'Could not create vendor',
+      reason: error.message,
+      remedy: 'Check the vendor details and try again.',
+    });
   }
 });
 
 // Update vendor
 router.put('/:id', authMiddleware, async (req, res) => {
-  const { name, email, company_name, phone, address, currency_id } = req.body;
+  const { name, email, company_name, phone, address } = req.body;
 
   try {
+    const { getBaseCurrencyId } = require('../config/currency');
+    const currency_id = await getBaseCurrencyId(req.companyId);
+
     await pool.query(
-      `UPDATE vendors 
+      `UPDATE vendors
        SET name = $1, email = $2, company_name = $3, phone = $4, address = $5, currency_id = $6, updated_at = NOW()
        WHERE id = $7 AND company_id = $8`,
       [name, email, company_name, phone, address, currency_id, req.params.id, req.companyId]
@@ -82,7 +93,11 @@ router.put('/:id', authMiddleware, async (req, res) => {
 
     res.json({ message: 'Vendor updated successfully' });
   } catch (error) {
-    res.status(500).json({ message: 'Error updating vendor', error: error.message });
+    res.status(500).json({
+      message: 'Could not update vendor',
+      reason: error.message,
+      remedy: 'Check the vendor details and try again.',
+    });
   }
 });
 

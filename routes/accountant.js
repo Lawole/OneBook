@@ -220,8 +220,26 @@ router.get('/accounts', auth, async (req, res) => {
 
 // POST /api/accountant/accounts
 router.post('/accounts', auth, async (req, res) => {
-  let { code, name, type, category, balance = 0, opening_balance_date } = req.body;
+  let { code, name, type, category, balance = 0, opening_balance_date, identifier = null } = req.body;
   const opening = parseFloat(balance) || 0;
+  const ident = identifier && String(identifier).trim() ? String(identifier).trim() : null;
+
+  // Enforce unique identifier per company (when provided).
+  if (ident) {
+    const dup = await pool.query(
+      `SELECT id FROM chart_of_accounts
+       WHERE company_id = $1 AND LOWER(identifier) = LOWER($2)`,
+      [req.companyId, ident]
+    );
+    if (dup.rows.length) {
+      return res.status(400).json({
+        message: 'That identifier is already used by another account',
+        reason: 'Identifiers must be unique per company so bank transactions can be matched unambiguously',
+        remedy: 'Pick a distinct keyword (e.g. include the account code) or leave blank.',
+      });
+    }
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -235,9 +253,9 @@ router.post('/accounts', auth, async (req, res) => {
     // Opening Balance Equity, so we insert with balance=0 and let the
     // journal-posting helper update both sides.
     const result = await client.query(
-      `INSERT INTO chart_of_accounts (company_id, code, name, type, category, balance)
-       VALUES ($1,$2,$3,$4,$5,0) RETURNING *`,
-      [req.companyId, code, name, type, category]
+      `INSERT INTO chart_of_accounts (company_id, code, name, type, category, balance, identifier)
+       VALUES ($1,$2,$3,$4,$5,0,$6) RETURNING *`,
+      [req.companyId, code, name, type, category, ident]
     );
     const account = result.rows[0];
 
@@ -251,8 +269,18 @@ router.post('/accounts', auth, async (req, res) => {
     res.status(201).json({ account: fresh.rows[0] });
   } catch (err) {
     await client.query('ROLLBACK');
-    if (err.code === '23505') return res.status(400).json({ message: 'Account code already exists' });
-    res.status(500).json({ message: 'Error creating account', error: err.message });
+    if (err.code === '23505') {
+      return res.status(400).json({
+        message: 'Account code already exists',
+        reason: `Code "${code}" is already used in your Chart of Accounts`,
+        remedy: 'Pick a different code (e.g. 5310 instead of 5300).',
+      });
+    }
+    res.status(500).json({
+      message: 'Could not create account',
+      reason: err.message,
+      remedy: 'Check the values and try again.',
+    });
   } finally {
     client.release();
   }
@@ -260,26 +288,48 @@ router.post('/accounts', auth, async (req, res) => {
 
 // PUT /api/accountant/accounts/:id
 router.put('/accounts/:id', auth, async (req, res) => {
-  const { code, name, type, category, balance, opening_balance_date } = req.body;
+  const { code, name, type, category, balance, opening_balance_date, identifier = null } = req.body;
   const newOpening = parseFloat(balance) || 0;
+  const ident = identifier && String(identifier).trim() ? String(identifier).trim() : null;
+
+  // Enforce unique identifier per company.
+  if (ident) {
+    const dup = await pool.query(
+      `SELECT id FROM chart_of_accounts
+       WHERE company_id = $1 AND LOWER(identifier) = LOWER($2) AND id <> $3`,
+      [req.companyId, ident, req.params.id]
+    );
+    if (dup.rows.length) {
+      return res.status(400).json({
+        message: 'That identifier is already used by another account',
+        reason: 'Identifiers must be unique per company',
+        remedy: 'Pick a distinct keyword or leave blank.',
+      });
+    }
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    // Read existing opening-journal amount so we know the delta to re-post.
     const before = await client.query(
       `SELECT * FROM chart_of_accounts WHERE id = $1 AND company_id = $2`,
       [req.params.id, req.companyId]
     );
     if (!before.rows.length) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ message: 'Account not found' });
+      return res.status(404).json({
+        message: 'Account not found',
+        reason: `No Chart-of-Account with id ${req.params.id} belongs to your company`,
+        remedy: 'Refresh the page to reload the accounts list.',
+      });
     }
 
     const result = await client.query(
-      `UPDATE chart_of_accounts SET code=$1, name=$2, type=$3, category=$4, updated_at=NOW()
-       WHERE id=$5 AND company_id=$6 RETURNING *`,
-      [code, name, type, category, req.params.id, req.companyId]
+      `UPDATE chart_of_accounts
+       SET code=$1, name=$2, type=$3, category=$4, identifier=$5, updated_at=NOW()
+       WHERE id=$6 AND company_id=$7 RETURNING *`,
+      [code, name, type, category, ident, req.params.id, req.companyId]
     );
     const account = result.rows[0];
 
@@ -293,7 +343,11 @@ router.put('/accounts/:id', auth, async (req, res) => {
     res.json({ account: fresh.rows[0] });
   } catch (err) {
     await client.query('ROLLBACK');
-    res.status(500).json({ message: 'Error updating account', error: err.message });
+    res.status(500).json({
+      message: 'Could not update account',
+      reason: err.message,
+      remedy: 'Check the values and try again.',
+    });
   } finally {
     client.release();
   }

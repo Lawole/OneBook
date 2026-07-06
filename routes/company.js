@@ -40,8 +40,21 @@ router.get('/', authMiddleware, async (req, res) => {
 router.put('/', authMiddleware, async (req, res) => {
   const { name, email, phone, address, tax_rate, base_currency, invoice_template } = req.body;
 
+  // The uniform base currency is chosen at signup and locked afterwards.
+  // Changing it would corrupt historical reports that reference currencies.id,
+  // so we reject any attempt that would actually change it.
+  if (base_currency !== undefined) {
+    const current = await pool.query('SELECT base_currency FROM companies WHERE id = $1', [req.companyId]);
+    if (current.rows.length && current.rows[0].base_currency !== base_currency) {
+      return res.status(400).json({
+        message: 'Base currency cannot be changed after registration',
+        reason: 'The base currency is chosen at signup and used by every historical invoice, expense, and journal entry.',
+        remedy: 'If you truly need to change it, contact support so we can migrate your data safely.',
+      });
+    }
+  }
+
   try {
-    // Build dynamic update to only change provided fields
     const fields = [];
     const values = [];
     let idx = 1;
@@ -51,7 +64,6 @@ router.put('/', authMiddleware, async (req, res) => {
     if (phone !== undefined)            { fields.push(`phone = $${idx++}`);            values.push(phone); }
     if (address !== undefined)          { fields.push(`address = $${idx++}`);          values.push(address); }
     if (tax_rate !== undefined)         { fields.push(`tax_rate = $${idx++}`);         values.push(tax_rate); }
-    if (base_currency !== undefined)    { fields.push(`base_currency = $${idx++}`);    values.push(base_currency); }
     if (invoice_template !== undefined) { fields.push(`invoice_template = $${idx++}`); values.push(invoice_template); }
 
     if (fields.length === 0) return res.json({ message: 'Nothing to update' });
@@ -66,7 +78,11 @@ router.put('/', authMiddleware, async (req, res) => {
 
     res.json({ message: 'Company updated successfully' });
   } catch (error) {
-    res.status(500).json({ message: 'Error updating company', error: error.message });
+    res.status(500).json({
+      message: 'Could not update company',
+      reason: error.message,
+      remedy: 'Check the values and try again.',
+    });
   }
 });
 

@@ -114,11 +114,15 @@ router.get('/', authMiddleware, async (req, res) => {
 
 // ── Create invoice ────────────────────────────────────────────
 router.post('/', authMiddleware, async (req, res) => {
-  const { customer_id, invoice_date, due_date, currency_id, notes, items, tax_rate } = req.body;
+  const { customer_id, invoice_date, due_date, notes, items, tax_rate } = req.body;
   const client = await pool.connect();
 
   try {
     await client.query('BEGIN');
+
+    // Uniform currency: every invoice uses the company base currency
+    const { getBaseCurrencyId } = require('../config/currency');
+    const currency_id = await getBaseCurrencyId(req.companyId);
 
     const maxResult = await client.query(
       `SELECT COALESCE(MAX(CAST(SPLIT_PART(invoice_number, '-', 2) AS INTEGER)), 0) as max_num
@@ -155,7 +159,11 @@ router.post('/', authMiddleware, async (req, res) => {
     res.status(201).json({ message: 'Invoice created successfully', invoice });
   } catch (error) {
     await client.query('ROLLBACK');
-    res.status(500).json({ message: 'Error creating invoice', error: error.message });
+    res.status(500).json({
+      message: 'Could not create invoice',
+      reason: error.message,
+      remedy: 'Check the customer, items, and dates then try again.',
+    });
   } finally {
     client.release();
   }

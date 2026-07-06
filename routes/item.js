@@ -63,7 +63,10 @@ router.get('/', authMiddleware, async (req, res) => {
 
 // Create item
 router.post('/', authMiddleware, async (req, res) => {
-  const { name, description, sku, category, unit_price, quantity_on_hand, reorder_level, currency_id } = req.body;
+  const { name, description, sku, category, unit_price, quantity_on_hand, reorder_level } = req.body;
+
+  const { getBaseCurrencyId } = require('../config/currency');
+  const currency_id = await getBaseCurrencyId(req.companyId);
 
   const client = await pool.connect();
 
@@ -103,11 +106,14 @@ router.post('/', authMiddleware, async (req, res) => {
 
 // Update item
 router.put('/:id', authMiddleware, async (req, res) => {
-  const { name, description, sku, category, unit_price, reorder_level, currency_id } = req.body;
+  const { name, description, sku, category, unit_price, reorder_level } = req.body;
 
   try {
+    const { getBaseCurrencyId } = require('../config/currency');
+    const currency_id = await getBaseCurrencyId(req.companyId);
+
     await pool.query(
-      `UPDATE items 
+      `UPDATE items
        SET name = $1, description = $2, sku = $3, category = $4, unit_price = $5, reorder_level = $6, currency_id = $7, updated_at = NOW()
        WHERE id = $8 AND company_id = $9`,
       [name, description, sku, category, unit_price, reorder_level, currency_id, req.params.id, req.companyId]
@@ -115,7 +121,11 @@ router.put('/:id', authMiddleware, async (req, res) => {
 
     res.json({ message: 'Item updated successfully' });
   } catch (error) {
-    res.status(500).json({ message: 'Error updating item', error: error.message });
+    res.status(500).json({
+      message: 'Could not update item',
+      reason: error.message,
+      remedy: 'Check the item details and try again.',
+    });
   }
 });
 

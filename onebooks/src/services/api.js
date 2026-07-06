@@ -220,6 +220,7 @@ export const bankingAPI = {
   getMatchSuggestions: (id) => api.get(`/banking/match-suggestions/${id}`),
   getSplits: (id) => api.get(`/banking/transactions/${id}/splits`),
   saveSplits: (id, splits) => api.post(`/banking/transactions/${id}/splits`, { splits }),
+  autoCategorise: (accountId) => api.post(`/banking/accounts/${accountId}/auto-categorise`),
 };
 
 export const filesAPI = {

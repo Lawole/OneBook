@@ -5,72 +5,337 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
+const path = require('path');
+const ExcelJS = require('exceljs');
 const pool = require('../config/database');
 const authMiddleware = require('../middleware/auth');
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 
-// ── CSV Parser ──────────────────────────────
-function parseCSVLine(line) {
-  const result = [];
-  let current = '';
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') { inQuotes = !inQuotes; continue; }
-    if (ch === ',' && !inQuotes) { result.push(current.trim()); current = ''; continue; }
-    current += ch;
+// ── Column-detection keywords ─────────────────────────────
+const COLUMN_KEYWORDS = {
+  date:   ['date', 'transdate', 'valuedate', 'postingdate', 'postdate', 'txndate'],
+  desc:   ['description', 'narration', 'particulars', 'details', 'memo',
+           'narrative', 'transactiondesc', 'desc', 'remarks', 'transactionremarks'],
+  debit:  ['debit', 'withdrawal', 'dr', 'moneyout', 'paidout', 'payment',
+           'debitamount', 'withdrawalamount'],
+  credit: ['credit', 'deposit', 'cr', 'moneyin', 'paidin', 'receipt',
+           'creditamount', 'depositamount'],
+  amount: ['amount', 'transactionamount', 'value', 'txnamount'],
+  ref:    ['ref', 'cheque', 'check', 'chequeno', 'refno', 'reference',
+           'transactionref', 'transactionreference'],
+};
+
+const normHeader = (h) =>
+  String(h || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+// Match a normalised header against a list of keywords.
+// Short keywords (< 4 chars, e.g. "cr", "dr", "in") match only exactly —
+// otherwise "cr" would false-match "description" and "in" would match
+// "invoicenumber". Long keywords match as substrings.
+function matchesAny(header, keywords) {
+  for (const k of keywords) {
+    if (k.length < 4) {
+      if (header === k) return true;
+    } else if (header.includes(k)) {
+      return true;
+    }
   }
-  result.push(current.trim());
-  return result;
+  return false;
 }
 
-function parseCSV(text) {
-  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').map(l => l.trim()).filter(Boolean);
-  if (lines.length < 2) return [];
-  const headers = parseCSVLine(lines[0]).map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
-  const rows = lines.slice(1).map(l => parseCSVLine(l));
+function detectColumns(headers) {
+  const findCol = (keys) => headers.findIndex((h) => matchesAny(h, keys));
 
-  // Detect columns
-  const col = (keywords) => headers.findIndex(h => keywords.some(k => h.includes(k)));
-  const dateCol   = col(['date', 'transdate', 'valuedate', 'postingdate']);
-  const descCol   = col(['description', 'narration', 'particulars', 'details', 'memo', 'narrative', 'transactiondesc', 'desc']);
-  const debitCol  = col(['debit', 'withdrawal', 'dr', 'out', 'payment', 'debitamount']);
-  const creditCol = col(['credit', 'deposit', 'cr', 'in', 'receipt', 'creditamount']);
-  const amtCol    = col(['amount', 'transactionamount', 'value']);
-  const refCol    = col(['ref', 'cheque', 'check', 'chequeno', 'refno', 'reference']);
+  return {
+    date:   findCol(COLUMN_KEYWORDS.date),
+    desc:   findCol(COLUMN_KEYWORDS.desc),
+    debit:  findCol(COLUMN_KEYWORDS.debit),
+    credit: findCol(COLUMN_KEYWORDS.credit),
+    amount: findCol(COLUMN_KEYWORDS.amount),
+    ref:    findCol(COLUMN_KEYWORDS.ref),
+  };
+}
 
-  if (dateCol === -1) return [];
+// ── Robust CSV Parser (handles multi-line quoted fields) ──
+// Returns array of arrays (one per row). Never drops rows.
+function parseCSVRaw(text) {
+  // Strip BOM if present
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
 
-  return rows.map(row => {
-    const dateRaw = row[dateCol] || '';
-    const desc    = row[descCol !== -1 ? descCol : 1] || 'No description';
-    const ref     = refCol !== -1 ? (row[refCol] || '') : '';
+  const rows = [];
+  let field = '';
+  let row = [];
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+
+    if (inQuotes) {
+      if (ch === '"') {
+        // Escaped quote ("")
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else {
+        field += ch;
+      }
+      continue;
+    }
+
+    if (ch === '"') { inQuotes = true; continue; }
+    if (ch === ',') { row.push(field); field = ''; continue; }
+    if (ch === '\r') continue;
+    if (ch === '\n') {
+      row.push(field);
+      // Skip fully blank lines
+      if (!(row.length === 1 && row[0].trim() === '')) rows.push(row);
+      row = [];
+      field = '';
+      continue;
+    }
+
+    field += ch;
+  }
+  // Flush last field/row
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    if (!(row.length === 1 && row[0].trim() === '')) rows.push(row);
+  }
+
+  return rows.map((r) => r.map((c) => c.trim()));
+}
+
+// ── Excel Parser (returns 2-D array of first non-empty worksheet) ──
+async function parseExcelRaw(buffer) {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buffer);
+  const ws = wb.worksheets.find((s) => s.rowCount > 0) || wb.worksheets[0];
+  if (!ws) return [];
+
+  const rows = [];
+  ws.eachRow({ includeEmpty: false }, (row) => {
+    const values = row.values.slice(1); // Row.values is 1-indexed
+    // Convert cells to plain strings — dates stay as Date, numbers as Number
+    rows.push(values.map((v) => {
+      if (v === null || v === undefined) return '';
+      if (v instanceof Date) return v.toISOString().split('T')[0];
+      if (typeof v === 'object' && v.text) return String(v.text);
+      if (typeof v === 'object' && v.result !== undefined) return String(v.result);
+      return String(v).trim();
+    }));
+  });
+  return rows;
+}
+
+// ── Flexible date parsing (multiple formats) ─────────────
+function parseFlexibleDate(raw) {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+
+  // Excel date already ISO
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    const d = new Date(s);
+    return isNaN(d) ? null : d.toISOString().split('T')[0];
+  }
+
+  // Numeric Excel serial (e.g. 44927)
+  const asNum = Number(s);
+  if (!isNaN(asNum) && asNum > 25000 && asNum < 60000 && Number.isInteger(asNum)) {
+    // Excel epoch = 1899-12-30
+    const d = new Date(Date.UTC(1899, 11, 30) + asNum * 86400000);
+    return isNaN(d) ? null : d.toISOString().split('T')[0];
+  }
+
+  // Split into parts by /, -, ., or space
+  const parts = s.split(/[\/\-.\s]+/).filter(Boolean);
+  const months = { jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12 };
+
+  if (parts.length >= 3) {
+    const p0 = parts[0], p1 = parts[1], p2 = parts[2];
+
+    // DD-MMM-YYYY or DD-MMM-YY (e.g. 15-Jan-2024)
+    const monKey = p1.substring(0, 3).toLowerCase();
+    if (months[monKey]) {
+      const day = parseInt(p0, 10);
+      let year = parseInt(p2, 10);
+      if (year < 100) year += year < 50 ? 2000 : 1900;
+      if (day >= 1 && day <= 31 && year >= 1900) {
+        const d = new Date(Date.UTC(year, months[monKey] - 1, day));
+        return isNaN(d) ? null : d.toISOString().split('T')[0];
+      }
+    }
+
+    // YYYY-MM-DD or YYYY/MM/DD
+    if (p0.length === 4) {
+      const y = parseInt(p0,10), m = parseInt(p1,10), day = parseInt(p2,10);
+      if (y>=1900 && m>=1 && m<=12 && day>=1 && day<=31) {
+        const d = new Date(Date.UTC(y, m - 1, day));
+        return isNaN(d) ? null : d.toISOString().split('T')[0];
+      }
+    }
+
+    // DD/MM/YYYY vs MM/DD/YYYY — assume DD/MM/YYYY (rest-of-world default).
+    // If the first part is > 12 it's clearly a day.
+    let a = parseInt(p0, 10), b = parseInt(p1, 10);
+    let year = parseInt(p2, 10);
+    if (year < 100) year += year < 50 ? 2000 : 1900;
+
+    if (a > 12 && b <= 12) {
+      // DD/MM/YYYY
+      const d = new Date(Date.UTC(year, b - 1, a));
+      return isNaN(d) ? null : d.toISOString().split('T')[0];
+    }
+    if (b > 12 && a <= 12) {
+      // MM/DD/YYYY
+      const d = new Date(Date.UTC(year, a - 1, b));
+      return isNaN(d) ? null : d.toISOString().split('T')[0];
+    }
+    // Ambiguous: default to DD/MM/YYYY
+    if (a >= 1 && a <= 31 && b >= 1 && b <= 12 && year >= 1900) {
+      const d = new Date(Date.UTC(year, b - 1, a));
+      return isNaN(d) ? null : d.toISOString().split('T')[0];
+    }
+  }
+
+  // Fallback to JS parser
+  const fallback = new Date(s);
+  return isNaN(fallback) ? null : fallback.toISOString().split('T')[0];
+}
+
+function parseAmount(raw) {
+  if (raw === null || raw === undefined) return 0;
+  const s = String(raw).trim();
+  if (!s) return 0;
+  // Handle (1,234.50) as negative
+  const negParen = /^\(.*\)$/.test(s);
+  const cleaned = s.replace(/[^0-9.\-]/g, '');
+  const n = parseFloat(cleaned);
+  if (isNaN(n)) return 0;
+  return negParen ? -Math.abs(n) : n;
+}
+
+// ── Build transactions[] from a raw 2-D grid ─────────────
+// Returns { transactions, columns, errors, rawRowCount }
+function buildTransactions(rawRows) {
+  const errors = [];
+  const transactions = [];
+
+  // Look for the header row — first row that contains a "date" column
+  let headerRowIdx = -1;
+  for (let i = 0; i < Math.min(rawRows.length, 10); i++) {
+    const normed = rawRows[i].map(normHeader);
+    if (normed.some((h) => COLUMN_KEYWORDS.date.some((k) => h.includes(k)))) {
+      headerRowIdx = i;
+      break;
+    }
+  }
+
+  if (headerRowIdx === -1) {
+    return {
+      transactions: [],
+      columns: null,
+      errors: [{
+        row: 0,
+        reason: 'No header row detected',
+        remedy: 'Ensure the first row contains a "Date" column (Date, Trans Date, Value Date, etc.). Remove any preamble rows before the header.',
+      }],
+      rawRowCount: rawRows.length,
+    };
+  }
+
+  const headers = rawRows[headerRowIdx].map(normHeader);
+  const cols = detectColumns(headers);
+
+  if (cols.date === -1) {
+    return {
+      transactions: [],
+      columns: cols,
+      errors: [{
+        row: headerRowIdx + 1,
+        reason: 'Missing Date column',
+        remedy: 'Rename the date column to one of: Date, Transaction Date, Value Date, Posting Date.',
+      }],
+      rawRowCount: rawRows.length,
+    };
+  }
+  if (cols.desc === -1) {
+    errors.push({
+      row: headerRowIdx + 1,
+      reason: 'Missing Description column',
+      remedy: 'Add a column named Description, Narration, Particulars, Details, Memo, or Narrative.',
+    });
+  }
+  if (cols.debit === -1 && cols.credit === -1 && cols.amount === -1) {
+    return {
+      transactions: [],
+      columns: cols,
+      errors: [{
+        row: headerRowIdx + 1,
+        reason: 'No amount column found',
+        remedy: 'Include either a single Amount column or separate Debit/Credit (Withdrawal/Deposit) columns.',
+      }],
+      rawRowCount: rawRows.length,
+    };
+  }
+
+  for (let i = headerRowIdx + 1; i < rawRows.length; i++) {
+    const row = rawRows[i];
+    // Skip completely empty rows
+    if (!row || row.every((c) => !c || String(c).trim() === '')) continue;
+
+    const rowNo = i + 1; // human-friendly row number
+
+    const dateRaw = row[cols.date] || '';
+    const desc    = (cols.desc !== -1 ? row[cols.desc] : row[1]) || '';
+    const ref     = cols.ref !== -1 ? (row[cols.ref] || '') : '';
+
+    const date = parseFlexibleDate(dateRaw);
+    if (!date) {
+      errors.push({
+        row: rowNo,
+        reason: `Cannot parse date "${dateRaw}"`,
+        remedy: 'Use formats such as DD/MM/YYYY, YYYY-MM-DD or DD-MMM-YYYY (e.g. 15-Jan-2024).',
+      });
+      continue;
+    }
 
     let amount = 0;
     let type = 'credit';
 
-    if (debitCol !== -1 || creditCol !== -1) {
-      const debitVal  = parseFloat((row[debitCol] || '').replace(/[^0-9.-]/g, '')) || 0;
-      const creditVal = parseFloat((row[creditCol] || '').replace(/[^0-9.-]/g, '')) || 0;
-      if (debitVal > 0) { amount = debitVal; type = 'debit'; }
-      else if (creditVal > 0) { amount = creditVal; type = 'credit'; }
-    } else if (amtCol !== -1) {
-      const raw = parseFloat((row[amtCol] || '').replace(/[^0-9.-]/g, '')) || 0;
+    if (cols.debit !== -1 || cols.credit !== -1) {
+      const debitVal  = cols.debit  !== -1 ? parseAmount(row[cols.debit])  : 0;
+      const creditVal = cols.credit !== -1 ? parseAmount(row[cols.credit]) : 0;
+      if (Math.abs(debitVal) > 0)      { amount = Math.abs(debitVal);  type = 'debit'; }
+      else if (Math.abs(creditVal) > 0) { amount = Math.abs(creditVal); type = 'credit'; }
+    } else if (cols.amount !== -1) {
+      const raw = parseAmount(row[cols.amount]);
       amount = Math.abs(raw);
       type = raw < 0 ? 'debit' : 'credit';
     }
 
-    // Parse date flexibly
-    let parsedDate = null;
-    const dStr = dateRaw.replace(/[^0-9/\-. ]/g, '').trim();
-    if (dStr) {
-      const d = new Date(dStr);
-      if (!isNaN(d)) parsedDate = d.toISOString().split('T')[0];
+    if (amount <= 0) {
+      errors.push({
+        row: rowNo,
+        reason: 'Transaction has no non-zero amount',
+        remedy: 'Ensure the amount / debit / credit column has a numeric value greater than zero.',
+      });
+      continue;
     }
 
-    return { date: parsedDate, description: desc.substring(0, 490), amount, type, reference: ref };
-  }).filter(r => r.date && r.amount > 0);
+    transactions.push({
+      date,
+      description: String(desc).substring(0, 490) || 'No description',
+      amount,
+      type,
+      reference: String(ref).substring(0, 100),
+    });
+  }
+
+  return { transactions, columns: cols, errors, rawRowCount: rawRows.length };
 }
 
 // ── Ledger posting helpers ───────────────────
@@ -200,7 +465,113 @@ async function postBankJournal(client, companyId, txnId, lines) {
   );
 }
 
-// ── Bank Accounts ────────────────────────────
+// ── Extract candidate invoice numbers from a description ──
+function extractInvoiceNumbers(text) {
+  if (!text) return [];
+  const s = String(text).toUpperCase();
+  // Common patterns: INV-000123, INV000123, INV/2024/001, #1234, INVOICE 1234
+  const found = new Set();
+  const patterns = [
+    /INV[\s\-\/#]*[A-Z0-9\-\/]{3,20}/g,
+    /INVOICE[\s\-\/#]*[A-Z0-9\-\/]{3,20}/g,
+    /#[A-Z0-9\-\/]{3,20}/g,
+  ];
+  for (const re of patterns) {
+    let m;
+    while ((m = re.exec(s)) !== null) {
+      found.add(m[0].replace(/[\s#]/g, '').replace(/^INVOICE/, 'INV'));
+    }
+  }
+  // Also raw numeric sequences of 4+ digits
+  const numRe = /\b\d{4,}\b/g;
+  let m;
+  while ((m = numRe.exec(s)) !== null) found.add(m[0]);
+  return Array.from(found);
+}
+
+// ── Auto-categorise a single transaction ─────────────────
+// Returns { status, matched_type, matched_id, coa_account_id, auto_matched }
+//         or null if no auto-decision could be made.
+async function autoCategoriseTransaction(txn, companyId) {
+  const desc = String(txn.description || '').toLowerCase();
+  const descUpper = String(txn.description || '').toUpperCase();
+
+  // ── 1. Match to invoice by invoice number in description
+  const candidates = extractInvoiceNumbers(txn.description);
+  if (candidates.length > 0 && txn.type === 'credit') {
+    // Try each candidate against invoice_number (LIKE match to accommodate padding)
+    for (const cand of candidates) {
+      const q = await pool.query(
+        `SELECT id, invoice_number, total_amount FROM invoices
+         WHERE company_id = $1
+           AND (UPPER(invoice_number) = $2
+                OR UPPER(invoice_number) LIKE $3
+                OR UPPER(REPLACE(invoice_number, '-', '')) = $2)
+         LIMIT 1`,
+        [companyId, cand, `%${cand}%`]
+      );
+      if (q.rows.length) {
+        return {
+          status: 'matched',
+          matched_type: 'invoice',
+          matched_id: q.rows[0].id,
+          coa_account_id: null,
+          auto_matched: true,
+        };
+      }
+    }
+  }
+
+  // ── 2. Match to expense number in description (money out)
+  if (candidates.length > 0 && txn.type === 'debit') {
+    for (const cand of candidates) {
+      const q = await pool.query(
+        `SELECT id, expense_number FROM expenses
+         WHERE company_id = $1
+           AND UPPER(expense_number) LIKE $2
+         LIMIT 1`,
+        [companyId, `%${cand}%`]
+      );
+      if (q.rows.length) {
+        return {
+          status: 'matched',
+          matched_type: 'expense',
+          matched_id: q.rows[0].id,
+          coa_account_id: null,
+          auto_matched: true,
+        };
+      }
+    }
+  }
+
+  // ── 3. Match to a Chart-of-Accounts identifier
+  const coa = await pool.query(
+    `SELECT id, identifier FROM chart_of_accounts
+     WHERE company_id = $1
+       AND identifier IS NOT NULL
+       AND identifier <> ''`,
+    [companyId]
+  );
+  for (const row of coa.rows) {
+    const ident = String(row.identifier).toLowerCase().trim();
+    if (!ident) continue;
+    if (desc.includes(ident) || descUpper.includes(String(row.identifier).toUpperCase())) {
+      return {
+        status: 'categorized',
+        matched_type: null,
+        matched_id: null,
+        coa_account_id: row.id,
+        auto_matched: true,
+      };
+    }
+  }
+
+  return null;
+}
+
+// ═══════════════════════════════════════════════════════
+// Bank Accounts
+// ═══════════════════════════════════════════════════════
 
 // GET /banking/accounts
 router.get('/accounts', authMiddleware, async (req, res) => {
@@ -214,23 +585,45 @@ router.get('/accounts', authMiddleware, async (req, res) => {
     );
     res.json({ accounts: result.rows });
   } catch (err) {
-    res.status(500).json({ message: 'Error fetching accounts', error: err.message });
+    res.status(500).json({
+      message: 'Could not load bank accounts',
+      reason: err.message,
+      remedy: 'Refresh the page. If it persists, check your network connection or contact support.',
+    });
   }
 });
 
 // POST /banking/accounts
 router.post('/accounts', authMiddleware, async (req, res) => {
   const { name, bank_name, account_number, account_type, current_balance, currency_code } = req.body;
-  if (!name) return res.status(400).json({ message: 'Account name is required' });
+  if (!name || !name.trim()) {
+    return res.status(400).json({
+      message: 'Account name is required',
+      reason: 'The "name" field was empty',
+      remedy: 'Enter a display name for this account (e.g. "Main Checking").',
+    });
+  }
   try {
+    // Default currency to the company's base currency if not provided
+    let currency = currency_code;
+    if (!currency) {
+      const c = await pool.query('SELECT base_currency FROM companies WHERE id = $1', [req.companyId]);
+      currency = c.rows[0]?.base_currency || 'USD';
+    }
+
     const result = await pool.query(
       `INSERT INTO bank_accounts (company_id, name, bank_name, account_number, account_type, current_balance, currency_code, created_at, updated_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW()) RETURNING *`,
-      [req.companyId, name, bank_name || null, account_number || null, account_type || 'checking', parseFloat(current_balance) || 0, currency_code || 'USD']
+      [req.companyId, name.trim(), bank_name || null, account_number || null,
+       account_type || 'checking', parseFloat(current_balance) || 0, currency]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ message: 'Error creating account', error: err.message });
+    res.status(500).json({
+      message: 'Could not create bank account',
+      reason: err.message,
+      remedy: 'Check the account name is unique and try again.',
+    });
   }
 });
 
@@ -242,12 +635,23 @@ router.put('/accounts/:id', authMiddleware, async (req, res) => {
       `UPDATE bank_accounts SET name=$1, bank_name=$2, account_number=$3, account_type=$4,
        current_balance=$5, currency_code=$6, updated_at=NOW()
        WHERE id=$7 AND company_id=$8 RETURNING *`,
-      [name, bank_name || null, account_number || null, account_type || 'checking', parseFloat(current_balance) || 0, currency_code || 'USD', req.params.id, req.companyId]
+      [name, bank_name || null, account_number || null, account_type || 'checking',
+       parseFloat(current_balance) || 0, currency_code || 'USD', req.params.id, req.companyId]
     );
-    if (!result.rows.length) return res.status(404).json({ message: 'Account not found' });
+    if (!result.rows.length) {
+      return res.status(404).json({
+        message: 'Account not found',
+        reason: `No bank account with id ${req.params.id} belongs to this company`,
+        remedy: 'Refresh the page to reload your accounts list.',
+      });
+    }
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ message: 'Error updating account', error: err.message });
+    res.status(500).json({
+      message: 'Could not update account',
+      reason: err.message,
+      remedy: 'Verify the values are valid and try again.',
+    });
   }
 });
 
@@ -257,15 +661,27 @@ router.delete('/accounts/:id', authMiddleware, async (req, res) => {
     await pool.query('DELETE FROM bank_accounts WHERE id=$1 AND company_id=$2', [req.params.id, req.companyId]);
     res.json({ message: 'Account deleted' });
   } catch (err) {
-    res.status(500).json({ message: 'Error deleting account', error: err.message });
+    res.status(500).json({
+      message: 'Could not delete account',
+      reason: err.message,
+      remedy: 'The account may have linked transactions. Remove them first, then retry.',
+    });
   }
 });
 
-// ── Import Statement ─────────────────────────
+// ═══════════════════════════════════════════════════════
+// Import Statement (CSV + Excel)
+// ═══════════════════════════════════════════════════════
 
 // POST /banking/accounts/:id/import
 router.post('/accounts/:id/import', authMiddleware, upload.single('statement'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
+  if (!req.file) {
+    return res.status(400).json({
+      message: 'No file was uploaded',
+      reason: 'The request did not contain a statement file',
+      remedy: 'Click "Choose file" and select a .csv, .xlsx or .xls export from your bank.',
+    });
+  }
 
   try {
     // Verify account belongs to company
@@ -273,41 +689,166 @@ router.post('/accounts/:id/import', authMiddleware, upload.single('statement'), 
       'SELECT * FROM bank_accounts WHERE id=$1 AND company_id=$2',
       [req.params.id, req.companyId]
     );
-    if (!acctResult.rows.length) return res.status(404).json({ message: 'Account not found' });
+    if (!acctResult.rows.length) {
+      return res.status(404).json({
+        message: 'Bank account not found',
+        reason: `Account id ${req.params.id} does not belong to your company`,
+        remedy: 'Return to the Banking page and pick an existing account before importing.',
+      });
+    }
 
-    const text = req.file.buffer.toString('utf-8');
-    const transactions = parseCSV(text);
+    // ── Decide parser based on extension / mimetype
+    const filename = (req.file.originalname || '').toLowerCase();
+    const ext = path.extname(filename);
+    const isExcel = ['.xlsx', '.xls', '.xlsm'].includes(ext)
+                 || /excel|spreadsheet/i.test(req.file.mimetype || '');
+
+    let rawRows;
+    try {
+      if (isExcel) {
+        rawRows = await parseExcelRaw(req.file.buffer);
+      } else {
+        // CSV / TXT
+        const text = req.file.buffer.toString('utf-8');
+        rawRows = parseCSVRaw(text);
+      }
+    } catch (parseErr) {
+      return res.status(400).json({
+        message: 'Could not read the file',
+        reason: parseErr.message,
+        remedy: isExcel
+          ? 'Save the file as .xlsx (not the older .xls binary format) and try again.'
+          : 'Ensure the file is a valid CSV encoded as UTF-8. Try re-exporting from your bank.',
+      });
+    }
+
+    if (!rawRows.length) {
+      return res.status(400).json({
+        message: 'The file appears to be empty',
+        reason: 'No rows were found in the uploaded file',
+        remedy: 'Confirm you exported the statement covering the correct date range and try again.',
+      });
+    }
+
+    const { transactions, columns, errors, rawRowCount } = buildTransactions(rawRows);
 
     if (!transactions.length) {
-      return res.status(400).json({ message: 'No valid transactions found. Check your CSV format (needs Date, Description, and Deposit/Withdrawal or Amount columns).' });
+      const first = errors[0] || {
+        reason: 'No transactions detected',
+        remedy: 'Check the file has Date, Description and Amount (or Debit/Credit) columns.',
+      };
+      return res.status(400).json({
+        message: 'No valid transactions found in the file',
+        reason: first.reason,
+        remedy: first.remedy,
+        details: {
+          rows_examined: rawRowCount,
+          errors: errors.slice(0, 10),
+          detected_columns: columns,
+        },
+      });
     }
 
     let imported = 0;
     let skipped = 0;
+    let autoCategorised = 0;
+    let autoMatched = 0;
+    const rowErrors = [];
 
     for (const txn of transactions) {
-      // Skip duplicates (same account, date, amount, description)
-      const dup = await pool.query(
-        'SELECT id FROM bank_transactions WHERE bank_account_id=$1 AND date=$2 AND amount=$3 AND description=$4',
-        [req.params.id, txn.date, txn.amount, txn.description]
-      );
-      if (dup.rows.length > 0) { skipped++; continue; }
+      try {
+        // Duplicate detection: same account + date + amount + description
+        const dup = await pool.query(
+          'SELECT id FROM bank_transactions WHERE bank_account_id=$1 AND date=$2 AND amount=$3 AND description=$4',
+          [req.params.id, txn.date, txn.amount, txn.description]
+        );
+        if (dup.rows.length > 0) { skipped++; continue; }
 
-      await pool.query(
-        `INSERT INTO bank_transactions (bank_account_id, company_id, date, description, amount, type, status, reference, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,'unmatched',$7,NOW())`,
-        [req.params.id, req.companyId, txn.date, txn.description, txn.amount, txn.type, txn.reference || null]
-      );
-      imported++;
+        // Try to auto-categorise / auto-match
+        const auto = await autoCategoriseTransaction(txn, req.companyId);
+
+        const inserted = await pool.query(
+          `INSERT INTO bank_transactions
+             (bank_account_id, company_id, date, description, amount, type,
+              status, reference, coa_account_id, matched_type, matched_id, auto_matched, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+           RETURNING id, amount, description, type`,
+          [
+            req.params.id, req.companyId, txn.date, txn.description,
+            txn.amount, txn.type,
+            auto ? auto.status : 'unmatched',
+            txn.reference || null,
+            auto ? auto.coa_account_id : null,
+            auto ? auto.matched_type : null,
+            auto ? auto.matched_id : null,
+            auto ? true : false,
+          ]
+        );
+
+        // If auto-categorised to a CoA account, post the ledger entry so
+        // reports and account balances stay in sync (same behaviour as manual
+        // categorisation via PUT /transactions/:id).
+        if (auto?.status === 'categorized' && auto?.coa_account_id) {
+          const ledgerClient = await pool.connect();
+          try {
+            await ledgerClient.query('BEGIN');
+            await postBankJournal(ledgerClient, req.companyId, inserted.rows[0].id, [{
+              coa_account_id: auto.coa_account_id,
+              amount:         inserted.rows[0].amount,
+              description:    inserted.rows[0].description,
+            }]);
+            await ledgerClient.query('COMMIT');
+          } catch (ledgerErr) {
+            await ledgerClient.query('ROLLBACK');
+            // Ledger failure shouldn't fail the whole import — the row will
+            // simply remain uncategorised in the ledger and can be re-posted
+            // by editing/re-categorising it later.
+            console.error('Bank ledger post failed for txn', inserted.rows[0].id, ledgerErr.message);
+          } finally {
+            ledgerClient.release();
+          }
+        }
+
+        imported++;
+        if (auto?.status === 'matched') autoMatched++;
+        if (auto?.status === 'categorized') autoCategorised++;
+      } catch (rowErr) {
+        rowErrors.push({
+          date: txn.date,
+          description: txn.description,
+          reason: rowErr.message,
+        });
+      }
     }
 
-    res.json({ message: `Imported ${imported} transactions (${skipped} duplicates skipped)`, imported, skipped });
+    const parts = [`Imported ${imported} transaction${imported === 1 ? '' : 's'}`];
+    if (skipped > 0)         parts.push(`${skipped} duplicate${skipped === 1 ? '' : 's'} skipped`);
+    if (autoMatched > 0)     parts.push(`${autoMatched} auto-matched to invoices/expenses`);
+    if (autoCategorised > 0) parts.push(`${autoCategorised} auto-categorised`);
+    const rowsWithIssues = errors.length + rowErrors.length;
+    if (rowsWithIssues > 0)  parts.push(`${rowsWithIssues} row${rowsWithIssues === 1 ? '' : 's'} could not be imported`);
+
+    res.json({
+      message: parts.join(' · '),
+      imported,
+      skipped,
+      auto_matched: autoMatched,
+      auto_categorised: autoCategorised,
+      row_errors: [...errors, ...rowErrors].slice(0, 20),
+      rows_examined: rawRowCount,
+    });
   } catch (err) {
-    res.status(500).json({ message: 'Error importing statement', error: err.message });
+    res.status(500).json({
+      message: 'Import failed',
+      reason: err.message,
+      remedy: 'Try again with a fresh export from your bank. If the problem persists, share the error message with support.',
+    });
   }
 });
 
-// ── Transactions ──────────────────────────────
+// ═══════════════════════════════════════════════════════
+// Transactions
+// ═══════════════════════════════════════════════════════
 
 // GET /banking/transactions?account_id=&status=&page=
 router.get('/transactions', authMiddleware, async (req, res) => {
@@ -359,7 +900,11 @@ router.get('/transactions', authMiddleware, async (req, res) => {
       stats: statsResult.rows[0],
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error fetching transactions', error: err.message });
+    res.status(500).json({
+      message: 'Could not load transactions',
+      reason: err.message,
+      remedy: 'Refresh the page. If it persists, the account may have been deleted.',
+    });
   }
 });
 
@@ -372,14 +917,19 @@ router.put('/transactions/:id', authMiddleware, async (req, res) => {
     const result = await client.query(
       `UPDATE bank_transactions
        SET status=$1, matched_type=$2, matched_id=$3, category=$4, notes=$5,
-           coa_account_id=$6, receipt_file_id=COALESCE($7, receipt_file_id)
+           coa_account_id=$6, receipt_file_id=COALESCE($7, receipt_file_id),
+           auto_matched=FALSE
        WHERE id=$8 AND company_id=$9 RETURNING *`,
       [status, matched_type || null, matched_id || null, category || null, notes || null,
        coa_account_id || null, receipt_file_id || null, req.params.id, req.companyId]
     );
     if (!result.rows.length) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ message: 'Transaction not found' });
+      return res.status(404).json({
+        message: 'Transaction not found',
+        reason: `No transaction with id ${req.params.id} belongs to this company`,
+        remedy: 'Refresh the transactions list and retry.',
+      });
     }
     const txn = result.rows[0];
 
@@ -396,7 +946,11 @@ router.put('/transactions/:id', authMiddleware, async (req, res) => {
     res.json(txn);
   } catch (err) {
     await client.query('ROLLBACK');
-    res.status(500).json({ message: 'Error updating transaction', error: err.message });
+    res.status(500).json({
+      message: 'Could not update transaction',
+      reason: err.message,
+      remedy: 'Refresh the page and try again.',
+    });
   } finally {
     client.release();
   }
@@ -413,13 +967,19 @@ router.delete('/transactions/:id', authMiddleware, async (req, res) => {
     res.json({ message: 'Transaction deleted' });
   } catch (err) {
     await client.query('ROLLBACK');
-    res.status(500).json({ message: 'Error deleting transaction', error: err.message });
+    res.status(500).json({
+      message: 'Could not delete transaction',
+      reason: err.message,
+      remedy: 'The transaction may already have been removed. Refresh the page.',
+    });
   } finally {
     client.release();
   }
 });
 
-// ── Transaction Splits (Itemise) ──────────────
+// ═══════════════════════════════════════════════════════
+// Transaction Splits (Itemise)
+// ═══════════════════════════════════════════════════════
 
 // GET /banking/transactions/:id/splits
 router.get('/transactions/:id/splits', authMiddleware, async (req, res) => {
@@ -434,7 +994,11 @@ router.get('/transactions/:id/splits', authMiddleware, async (req, res) => {
     );
     res.json({ splits: result.rows });
   } catch (err) {
-    res.status(500).json({ message: 'Error fetching splits', error: err.message });
+    res.status(500).json({
+      message: 'Could not load splits',
+      reason: err.message,
+      remedy: 'Refresh the page and try again.',
+    });
   }
 });
 
@@ -442,7 +1006,11 @@ router.get('/transactions/:id/splits', authMiddleware, async (req, res) => {
 router.post('/transactions/:id/splits', authMiddleware, async (req, res) => {
   const { splits } = req.body;
   if (!Array.isArray(splits) || splits.length === 0) {
-    return res.status(400).json({ message: 'splits array is required' });
+    return res.status(400).json({
+      message: 'At least one split line is required',
+      reason: 'The splits array was empty or missing',
+      remedy: 'Add at least one line with an account and amount before saving.',
+    });
   }
 
   // Verify transaction belongs to this company
@@ -450,13 +1018,18 @@ router.post('/transactions/:id/splits', authMiddleware, async (req, res) => {
     'SELECT * FROM bank_transactions WHERE id=$1 AND company_id=$2',
     [req.params.id, req.companyId]
   );
-  if (!txnCheck.rows.length) return res.status(404).json({ message: 'Transaction not found' });
+  if (!txnCheck.rows.length) {
+    return res.status(404).json({
+      message: 'Transaction not found',
+      reason: `Transaction id ${req.params.id} does not exist for this company`,
+      remedy: 'Refresh the page and try again.',
+    });
+  }
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    // Replace all existing splits
     await client.query('DELETE FROM bank_transaction_splits WHERE bank_transaction_id=$1', [req.params.id]);
 
     for (const split of splits) {
@@ -467,7 +1040,6 @@ router.post('/transactions/:id/splits', authMiddleware, async (req, res) => {
       );
     }
 
-    // Mark transaction as categorized
     await client.query(
       `UPDATE bank_transactions SET status='categorized', coa_account_id=NULL WHERE id=$1 AND company_id=$2`,
       [req.params.id, req.companyId]
@@ -484,32 +1056,42 @@ router.post('/transactions/:id/splits', authMiddleware, async (req, res) => {
     res.json({ message: 'Splits saved', count: splits.length });
   } catch (err) {
     await client.query('ROLLBACK');
-    res.status(500).json({ message: 'Error saving splits', error: err.message });
+    res.status(500).json({
+      message: 'Could not save splits',
+      reason: err.message,
+      remedy: 'Check each line has a valid account and numeric amount, then retry.',
+    });
   } finally {
     client.release();
   }
 });
 
-// ── Match Suggestions ─────────────────────────
+// ═══════════════════════════════════════════════════════
+// Match Suggestions
+// ═══════════════════════════════════════════════════════
 
-// GET /banking/match-suggestions/:id  (find invoices/expenses close to a transaction by amount AND description)
+// GET /banking/match-suggestions/:id
 router.get('/match-suggestions/:id', authMiddleware, async (req, res) => {
   try {
     const txnResult = await pool.query(
       'SELECT * FROM bank_transactions WHERE id=$1 AND company_id=$2',
       [req.params.id, req.companyId]
     );
-    if (!txnResult.rows.length) return res.status(404).json({ message: 'Transaction not found' });
+    if (!txnResult.rows.length) {
+      return res.status(404).json({
+        message: 'Transaction not found',
+        reason: `Transaction id ${req.params.id} not found`,
+        remedy: 'Refresh the page.',
+      });
+    }
     const txn = txnResult.rows[0];
 
-    // Extract a meaningful keyword from the description for soft matching
-    const words = txn.description.split(/\s+/).filter(w => w.length > 3);
+    const words = txn.description.split(/\s+/).filter((w) => w.length > 3);
     const descPattern = words.length > 0 ? `%${words[0]}%` : null;
 
     let suggestions = [];
 
     if (txn.type === 'credit') {
-      // Match to invoices (money coming in) — by amount proximity OR description keyword
       const invoices = await pool.query(
         `SELECT i.id, i.invoice_number as reference, c.name as party, i.total_amount as amount,
                 i.invoice_date as date, i.status, 'invoice' as match_type
@@ -523,7 +1105,6 @@ router.get('/match-suggestions/:id', authMiddleware, async (req, res) => {
       );
       suggestions = invoices.rows;
     } else {
-      // Match to expenses (money going out) — by amount proximity OR description keyword
       const expenses = await pool.query(
         `SELECT e.id, e.expense_number as reference, v.name as party, e.amount, e.expense_date as date,
                 e.category as status, 'expense' as match_type
@@ -540,7 +1121,84 @@ router.get('/match-suggestions/:id', authMiddleware, async (req, res) => {
 
     res.json({ transaction: txn, suggestions });
   } catch (err) {
-    res.status(500).json({ message: 'Error fetching suggestions', error: err.message });
+    res.status(500).json({
+      message: 'Could not load suggestions',
+      reason: err.message,
+      remedy: 'Try again in a moment.',
+    });
+  }
+});
+
+// ═══════════════════════════════════════════════════════
+// Re-run auto-categorisation across existing transactions
+// ═══════════════════════════════════════════════════════
+
+// POST /banking/accounts/:id/auto-categorise
+router.post('/accounts/:id/auto-categorise', authMiddleware, async (req, res) => {
+  try {
+    const acct = await pool.query(
+      'SELECT id FROM bank_accounts WHERE id=$1 AND company_id=$2',
+      [req.params.id, req.companyId]
+    );
+    if (!acct.rows.length) {
+      return res.status(404).json({
+        message: 'Bank account not found',
+        reason: `No account with id ${req.params.id}`,
+        remedy: 'Refresh the page and pick a valid account.',
+      });
+    }
+
+    const unmatched = await pool.query(
+      `SELECT id, description, amount, type FROM bank_transactions
+       WHERE bank_account_id=$1 AND company_id=$2 AND status='unmatched'`,
+      [req.params.id, req.companyId]
+    );
+
+    let updated = 0;
+    for (const txn of unmatched.rows) {
+      const auto = await autoCategoriseTransaction(txn, req.companyId);
+      if (!auto) continue;
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          `UPDATE bank_transactions
+           SET status=$1, matched_type=$2, matched_id=$3,
+               coa_account_id=$4, auto_matched=TRUE
+           WHERE id=$5 AND company_id=$6`,
+          [auto.status, auto.matched_type, auto.matched_id, auto.coa_account_id,
+           txn.id, req.companyId]
+        );
+        // Keep the ledger in sync when auto-categorising to a CoA account
+        if (auto.status === 'categorized' && auto.coa_account_id) {
+          await postBankJournal(client, req.companyId, txn.id, [{
+            coa_account_id: auto.coa_account_id,
+            amount:         txn.amount,
+            description:    txn.description,
+          }]);
+        }
+        await client.query('COMMIT');
+        updated++;
+      } catch (rowErr) {
+        await client.query('ROLLBACK');
+        console.error('Auto-categorise failed for txn', txn.id, rowErr.message);
+      } finally {
+        client.release();
+      }
+    }
+
+    res.json({
+      message: `Auto-categorised ${updated} transaction${updated === 1 ? '' : 's'}`,
+      updated,
+      examined: unmatched.rows.length,
+    });
+  } catch (err) {
+    res.status(500).json({
+      message: 'Auto-categorisation failed',
+      reason: err.message,
+      remedy: 'Ensure your Chart of Accounts has identifiers set for the accounts you want auto-matched.',
+    });
   }
 });
 

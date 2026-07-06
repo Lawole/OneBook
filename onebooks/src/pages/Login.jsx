@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Eye, EyeOff, ArrowRight, ArrowLeft, Zap,
@@ -6,98 +6,8 @@ import {
 } from 'lucide-react';
 import { authAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
-import { WORLD_CURRENCIES } from '../utils/currencies';
 import Logo from '../components/Logo';
-
-/* ─── Currency Picker (compact, matches lv2 style) ─────────────── */
-const CurrencyPicker = ({ value, onChange }) => {
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState('');
-  const containerRef = useRef(null);
-  const inputRef = useRef(null);
-
-  const selected = WORLD_CURRENCIES.find((c) => c.code === value);
-  const filtered = WORLD_CURRENCIES.filter((c) => {
-    const q = search.toLowerCase();
-    return c.code.toLowerCase().includes(q) || c.label.toLowerCase().includes(q) || c.country.toLowerCase().includes(q);
-  });
-
-  useEffect(() => {
-    const h = (e) => { if (containerRef.current && !containerRef.current.contains(e.target)) { setOpen(false); setSearch(''); } };
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
-  }, []);
-
-  return (
-    <div ref={containerRef} style={{ position: 'relative' }}>
-      <button
-        type="button"
-        onClick={() => { setOpen(!open); setTimeout(() => inputRef.current?.focus(), 50); }}
-        className="lv2-input"
-        style={{ width: '100%', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }}
-      >
-        {selected ? (
-          <>
-            <span style={{ fontSize: 18 }}>{selected.flag}</span>
-            <span style={{ fontWeight: 600, color: '#0d0d0d' }}>{selected.code}</span>
-            <span style={{ color: '#8a8a8a', flex: 1, fontSize: 14 }}>— {selected.label}</span>
-            <span style={{ color: '#8a8a8a' }}>▾</span>
-          </>
-        ) : (
-          <span style={{ color: '#a8a8a8' }}>Select currency ▾</span>
-        )}
-      </button>
-      {open && (
-        <div style={{
-          position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0,
-          background: 'white', border: '1px solid #e6e6e6',
-          borderRadius: 14, boxShadow: '0 16px 40px rgba(0,0,0,0.18)',
-          zIndex: 9999, overflow: 'hidden',
-          animation: 'fadeUp 0.2s var(--ease-out)',
-        }}>
-          <div style={{ padding: '10px', borderBottom: '1px solid #f0f0f0' }}>
-            <input
-              ref={inputRef}
-              type="text"
-              placeholder="Search currency…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={{
-                width: '100%', border: '1px solid #e6e6e6',
-                borderRadius: 10, padding: '9px 12px', fontSize: 13,
-                outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit',
-                background: '#fafafa',
-              }}
-            />
-          </div>
-          <div style={{ maxHeight: 220, overflowY: 'auto' }}>
-            {filtered.map((c) => (
-              <div
-                key={c.code}
-                onClick={() => { onChange(c.code); setOpen(false); setSearch(''); }}
-                style={{
-                  padding: '10px 14px', cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  fontSize: 13,
-                  background: c.code === value ? '#f5f5f5' : 'transparent',
-                  borderLeft: c.code === value ? '3px solid #0d0d0d' : '3px solid transparent',
-                  transition: 'background 0.15s',
-                }}
-                onMouseEnter={(e) => { if (c.code !== value) e.currentTarget.style.background = '#fafafa'; }}
-                onMouseLeave={(e) => { if (c.code !== value) e.currentTarget.style.background = 'transparent'; }}
-              >
-                <span style={{ fontSize: 18 }}>{c.flag}</span>
-                <span style={{ fontWeight: 600, minWidth: 38, color: '#0d0d0d' }}>{c.code}</span>
-                <span style={{ color: '#4a4a4a', flex: 1 }}>{c.label}</span>
-                <span style={{ color: '#8a8a8a', fontSize: 11 }}>{c.symbol}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
+import CurrencyPicker from '../components/CurrencyPicker';
 
 /* ─── Background slideshow images (diverse, global) ──────────── */
 const SLIDESHOW_IMAGES = [

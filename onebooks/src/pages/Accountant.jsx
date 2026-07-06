@@ -68,7 +68,15 @@ const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov
 // Chart of Accounts Tab
 // ─────────────────────────────────────────────────────────────────────────────
 
-const blankAccount = { code: '', name: '', type: 'Asset', category: 'Current Asset', balance: '', opening_balance_date: new Date().toISOString().split('T')[0] };
+const blankAccount = {
+  code: '',
+  name: '',
+  type: 'Asset',
+  category: 'Current Asset',
+  balance: '',
+  opening_balance_date: new Date().toISOString().split('T')[0],
+  identifier: '',
+};
 
 const ChartOfAccountsTab = ({ fmt }) => {
   const [accounts, setAccounts] = useState([]);
@@ -136,14 +144,11 @@ const ChartOfAccountsTab = ({ fmt }) => {
         setAccounts((prev) => prev.map((a) => a.id === form.id ? updated : a));
       }
       setModal(null);
-    } catch {
-      // demo mode: apply locally
-      if (modal === 'create') {
-        setAccounts((prev) => [...prev, { ...form, id: Date.now(), balance: parseFloat(form.balance) || 0 }]);
-      } else {
-        setAccounts((prev) => prev.map((a) => a.id === form.id ? { ...form, balance: parseFloat(form.balance) || 0 } : a));
-      }
-      setModal(null);
+    } catch (err) {
+      const data = err.response?.data;
+      const msg = data?.message || 'Could not save the account';
+      const remedy = data?.remedy ? ` ${data.remedy}` : '';
+      setError(msg + remedy);
     } finally { setSaving(false); }
   };
 
@@ -168,17 +173,20 @@ const ChartOfAccountsTab = ({ fmt }) => {
         <div className="card-body">
           <table className="table">
             <thead>
-              <tr><th>Code</th><th>Account Name</th><th>Type</th><th>Category</th><th className="text-right">Balance</th><th className="text-right">Actions</th></tr>
+              <tr><th>Code</th><th>Account Name</th><th>Type</th><th>Category</th><th>Auto-match Identifier</th><th className="text-right">Balance</th><th className="text-right">Actions</th></tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={6} className="text-center text-muted">No accounts found.</td></tr>
+                <tr><td colSpan={7} className="text-center text-muted">No accounts found.</td></tr>
               ) : filtered.map((a) => (
                 <tr key={a.id}>
                   <td style={{ fontFamily: 'monospace', color: '#64748b' }}>{a.code}</td>
                   <td className="font-medium">{a.name}</td>
                   <td><TypeBadge type={a.type} /></td>
                   <td style={{ color: '#64748b', fontSize: 13 }}>{a.category}</td>
+                  <td style={{ fontSize: 12, color: a.identifier ? '#2563eb' : '#cbd5e1', fontFamily: 'monospace' }}>
+                    {a.identifier || '—'}
+                  </td>
                   <td className="text-right" style={{ color: a.balance < 0 ? '#dc2626' : '#1e293b' }}>{fmt(a.balance)}</td>
                   <td className="text-right">
                     <button className="btn-icon" onClick={() => openEdit(a)} title="Edit"><Edit2 size={16} /></button>
@@ -242,7 +250,25 @@ const ChartOfAccountsTab = ({ fmt }) => {
                   </div>
                 </div>
               ) : null}
-              {error && <div style={{ color: '#dc2626', fontSize: 13, marginBottom: 12 }}>{error}</div>}
+              <div className="form-group">
+                <label>
+                  Auto-match Identifier
+                  <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 500, color: '#64748b' }}>
+                    (optional keyword used to auto-categorise bank transactions)
+                  </span>
+                </label>
+                <input
+                  className="form-control"
+                  value={form.identifier || ''}
+                  onChange={(e) => setForm({ ...form, identifier: e.target.value })}
+                  placeholder='e.g. "AWS", "NEPA", "AZURE"'
+                  maxLength={100}
+                />
+                <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>
+                  Any imported bank transaction whose description contains this keyword will be automatically categorised to this account. Must be unique across your Chart of Accounts.
+                </div>
+              </div>
+              {error && <div style={{ background: '#fee2e2', color: '#991b1b', padding: '10px 14px', borderRadius: 8, marginBottom: 12, fontSize: 13 }}>{error}</div>}
               <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
                 <button type="button" className="btn btn-outline" onClick={() => setModal(null)}>Cancel</button>
                 <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving...' : 'Save Account'}</button>

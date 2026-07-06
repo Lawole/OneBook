@@ -32,21 +32,54 @@ router.post('/register', async (req, res) => {
   const { company_name, email, password, base_currency } = req.body;
 
   if (!company_name || !email || !password) {
-    return res.status(400).json({ message: 'Company name, email and password are required' });
+    return res.status(400).json({
+      message: 'Company name, email and password are required',
+      reason: 'One or more required fields was empty',
+      remedy: 'Fill in your company name, work email and password to continue.',
+    });
   }
 
   if (password.length < 6) {
-    return res.status(400).json({ message: 'Password must be at least 6 characters' });
+    return res.status(400).json({
+      message: 'Password must be at least 6 characters',
+      reason: 'The password you entered is too short',
+      remedy: 'Choose a password of 6 or more characters, ideally with numbers and symbols.',
+    });
   }
 
-  const currencyCode = (base_currency && CURRENCIES[base_currency]) ? base_currency : 'USD';
-  const currencyInfo = CURRENCIES[currencyCode];
+  if (!base_currency) {
+    return res.status(400).json({
+      message: 'A base currency is required',
+      reason: 'No currency was selected during signup',
+      remedy: 'Pick the currency you will use across your OneBooks account (this cannot be changed later without affecting historical reports).',
+    });
+  }
+
+  // Accept any ISO-4217 currency code (3 uppercase letters). We validate loosely
+  // rather than pinning to a fixed list so newly added currencies work without
+  // a code change. The client picker is limited to real currencies.
+  const isKnown = CURRENCIES[base_currency] || /^[A-Z]{3}$/.test(base_currency);
+
+  if (!isKnown) {
+    return res.status(400).json({
+      message: 'Unsupported currency selected',
+      reason: `"${base_currency}" is not in the supported currency list`,
+      remedy: 'Pick a currency from the dropdown on the signup screen.',
+    });
+  }
+
+  const currencyCode = base_currency;
+  const currencyInfo = CURRENCIES[currencyCode] || { name: currencyCode, symbol: currencyCode };
 
   try {
     // Check if email already exists
     const existing = await pool.query('SELECT id FROM companies WHERE email = $1', [email]);
     if (existing.rows.length > 0) {
-      return res.status(409).json({ message: 'An account with this email already exists' });
+      return res.status(409).json({
+        message: 'An account with this email already exists',
+        reason: `${email} is already registered`,
+        remedy: 'Sign in instead, or use "Forgot password" to recover access.',
+      });
     }
 
     const password_hash = await bcrypt.hash(password, 10);
@@ -86,7 +119,11 @@ router.post('/register', async (req, res) => {
     });
   } catch (error) {
     console.error('Register error:', error);
-    res.status(500).json({ message: 'Registration failed', error: error.message });
+    res.status(500).json({
+      message: 'Registration failed',
+      reason: error.message,
+      remedy: 'Please try again. If the problem persists, contact support.',
+    });
   }
 });
 
@@ -95,25 +132,41 @@ router.post('/login', async (req, res) => {
   const { email, password } = req.body;
 
   if (!email || !password) {
-    return res.status(400).json({ message: 'Email and password are required' });
+    return res.status(400).json({
+      message: 'Email and password are required',
+      reason: 'One or both fields were empty',
+      remedy: 'Enter both your email address and password to sign in.',
+    });
   }
 
   try {
     const result = await pool.query('SELECT * FROM companies WHERE email = $1', [email]);
 
     if (result.rows.length === 0) {
-      return res.status(401).json({ message: 'Invalid email or password' });
+      return res.status(401).json({
+        message: 'Invalid email or password',
+        reason: 'No account matches these credentials',
+        remedy: 'Double-check your email address and password, or use "Forgot password" if you cannot remember it.',
+      });
     }
 
     const company = result.rows[0];
 
     if (!company.password_hash) {
-      return res.status(401).json({ message: 'Invalid email or password' });
+      return res.status(401).json({
+        message: 'Invalid email or password',
+        reason: 'This account has no password set',
+        remedy: 'Use "Forgot password" to set one, or contact support.',
+      });
     }
 
     const isValid = await bcrypt.compare(password, company.password_hash);
     if (!isValid) {
-      return res.status(401).json({ message: 'Invalid email or password' });
+      return res.status(401).json({
+        message: 'Invalid email or password',
+        reason: 'The password you entered does not match this account',
+        remedy: 'Try again, or use "Forgot password" to reset it.',
+      });
     }
 
     const token = jwt.sign(
@@ -137,7 +190,11 @@ router.post('/login', async (req, res) => {
     });
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({ message: 'Login failed', error: error.message });
+    res.status(500).json({
+      message: 'Login failed',
+      reason: error.message,
+      remedy: 'Refresh the page and try again. If it persists, contact support.',
+    });
   }
 });
 

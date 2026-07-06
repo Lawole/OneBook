@@ -78,7 +78,10 @@ router.get('/', authMiddleware, async (req, res) => {
 
 // Create credit note
 router.post('/', authMiddleware, async (req, res) => {
-  const { customer_id, invoice_id, credit_date, currency_id, reason, items, tax_rate } = req.body;
+  const { customer_id, invoice_id, credit_date, reason, items, tax_rate } = req.body;
+
+  const { getBaseCurrencyId } = require('../config/currency');
+  const currency_id = await getBaseCurrencyId(req.companyId);
 
   const client = await pool.connect();
 

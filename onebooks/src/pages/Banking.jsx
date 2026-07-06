@@ -1,19 +1,25 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   Plus, Upload, X, Edit2, Trash2, CheckCircle, Link, Ban,
   RefreshCw, Building2, Tag, Scissors, Paperclip, ExternalLink,
+  AlertTriangle, Info, Sparkles, Wallet,
+  ArrowUpRight, ArrowDownRight,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell,
 } from 'recharts';
 import Header from '../components/Header';
+import CurrencyPicker from '../components/CurrencyPicker';
 import { bankingAPI, accountAPI, filesAPI } from '../services/api';
 import useCurrency from '../hooks/useCurrency';
+import { WORLD_CURRENCIES } from '../utils/currencies';
 
 // ── helpers ────────────────────────────────────────────────────
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+
+const currencyFlag = (code) => WORLD_CURRENCIES.find((c) => c.code === code)?.flag || '';
 
 const ACCOUNT_TYPES = [
   { value: 'checking',    label: 'Checking Account' },
@@ -30,6 +36,17 @@ const STATUS_CONFIG = {
   categorized: { label: 'Categorized', bg: '#dbeafe', color: '#1e40af', dot: '#3b82f6' },
 };
 
+// ── error message helper ───────────────────────────────────────
+const buildErrorText = (err, fallback = 'Something went wrong.') => {
+  const data = err?.response?.data;
+  if (!data) return err?.message || fallback;
+  const parts = [];
+  if (data.message) parts.push(data.message);
+  if (data.reason  && data.reason  !== data.message) parts.push(`Reason: ${data.reason}`);
+  if (data.remedy) parts.push(`How to fix: ${data.remedy}`);
+  return parts.join('  ·  ') || fallback;
+};
+
 // ── shared UI ──────────────────────────────────────────────────
 const StatusBadge = ({ status }) => {
   const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.unmatched;
@@ -43,27 +60,79 @@ const StatusBadge = ({ status }) => {
 
 const Overlay = ({ children, onClose }) => (
   <div
-    style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+    style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.55)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
     onClick={(e) => e.target === e.currentTarget && onClose()}
   >
     {children}
   </div>
 );
 
-const ModalBox = ({ children, width = 480 }) => (
-  <div style={{ background: '#fff', borderRadius: 14, padding: 28, width: '100%', maxWidth: width, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 25px 60px rgba(0,0,0,0.2)' }}>
+const ModalBox = ({ children, width = 520 }) => (
+  <div style={{ background: '#fff', borderRadius: 16, padding: 28, width: '100%', maxWidth: width, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 30px 80px rgba(15, 23, 42, 0.25)' }}>
     {children}
   </div>
 );
 
-const ModalHeader = ({ title, onClose }) => (
-  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
-    <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: '#1e293b' }}>{title}</h3>
-    <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 4, borderRadius: 6 }}>
+const ModalHeader = ({ title, subtitle, onClose }) => (
+  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 22 }}>
+    <div>
+      <h3 style={{ margin: 0, fontSize: 19, fontWeight: 700, color: '#0f172a', letterSpacing: -0.1 }}>{title}</h3>
+      {subtitle && <div style={{ fontSize: 13, color: '#64748b', marginTop: 4 }}>{subtitle}</div>}
+    </div>
+    <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 6, borderRadius: 8, marginTop: -6 }}>
       <X size={20} />
     </button>
   </div>
 );
+
+const ErrorPanel = ({ text }) => (
+  <div style={{ background: '#fef2f2', color: '#991b1b', padding: '12px 14px', borderRadius: 10, marginBottom: 12, fontSize: 13, border: '1px solid #fecaca', display: 'flex', gap: 10 }}>
+    <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+    <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>{text}</div>
+  </div>
+);
+
+// ── Metric Card (KPI at the top) ───────────────────────────────
+const MetricCard = ({ icon: Icon, label, value, delta, tone = 'neutral' }) => {
+  const toneColors = {
+    positive: { icon: '#0d9488', bg: '#ecfeff', chip: '#0d9488' },
+    negative: { icon: '#dc2626', bg: '#fef2f2', chip: '#dc2626' },
+    neutral:  { icon: '#334155', bg: '#f1f5f9', chip: '#334155' },
+    accent:   { icon: '#4f46e5', bg: '#eef2ff', chip: '#4f46e5' },
+  }[tone];
+
+  return (
+    <div style={{
+      background: '#fff',
+      border: '1px solid #e6e8ee',
+      borderRadius: 14,
+      padding: '18px 20px',
+      display: 'flex',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: 12,
+    }}>
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', letterSpacing: 0.3, textTransform: 'uppercase', marginBottom: 8 }}>
+          {label}
+        </div>
+        <div style={{ fontSize: 22, fontWeight: 700, color: '#0f172a', letterSpacing: -0.3 }}>{value}</div>
+        {delta && (
+          <div style={{ fontSize: 12, fontWeight: 600, color: toneColors.chip, marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+            {delta}
+          </div>
+        )}
+      </div>
+      <div style={{
+        width: 40, height: 40, borderRadius: 10,
+        background: toneColors.bg,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+      }}>
+        <Icon size={20} style={{ color: toneColors.icon }} />
+      </div>
+    </div>
+  );
+};
 
 // ── Balance Bar Chart ──────────────────────────────────────────
 const BalancesChart = ({ accounts, fmt }) => {
@@ -71,6 +140,7 @@ const BalancesChart = ({ accounts, fmt }) => {
     name: a.name.length > 16 ? a.name.substring(0, 16) + '…' : a.name,
     balance: parseFloat(a.current_balance) || 0,
     fullName: a.name,
+    currency: a.currency_code,
   }));
 
   const CustomTooltip = ({ active, payload }) => {
@@ -78,9 +148,10 @@ const BalancesChart = ({ accounts, fmt }) => {
     const val = payload[0].value;
     const entry = payload[0].payload;
     return (
-      <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 8, padding: '10px 14px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
-        <div style={{ fontWeight: 600, color: '#1e293b', marginBottom: 4 }}>{entry.fullName}</div>
-        <div style={{ color: val >= 0 ? '#10b981' : '#ef4444', fontWeight: 700 }}>{fmt(val)}</div>
+      <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10, padding: '10px 14px', boxShadow: '0 10px 24px rgba(15,23,42,0.12)' }}>
+        <div style={{ fontWeight: 600, color: '#0f172a', marginBottom: 4 }}>{entry.fullName}</div>
+        <div style={{ color: val >= 0 ? '#0d9488' : '#dc2626', fontWeight: 700 }}>{fmt(val)}</div>
+        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{entry.currency}</div>
       </div>
     );
   };
@@ -92,42 +163,38 @@ const BalancesChart = ({ accounts, fmt }) => {
   };
 
   return (
-    <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, padding: '20px 24px', marginBottom: 24 }}>
-      <div style={{ fontWeight: 700, fontSize: 16, color: '#1e293b', marginBottom: 2 }}>Account Balances</div>
-      <div style={{ fontSize: 13, color: '#94a3b8', marginBottom: 16 }}>Overview of all bank and cash account balances</div>
+    <div style={{ background: '#fff', border: '1px solid #e6e8ee', borderRadius: 16, padding: '22px 26px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 16, color: '#0f172a', letterSpacing: -0.1 }}>Account balances</div>
+          <div style={{ fontSize: 13, color: '#94a3b8', marginTop: 2 }}>Real-time snapshot of every bank and cash account</div>
+        </div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', background: '#f8fafc', border: '1px solid #e2e8f0', padding: '5px 10px', borderRadius: 20, fontSize: 12, color: '#64748b' }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e' }} />
+          Live
+        </div>
+      </div>
 
-      <ResponsiveContainer width="100%" height={200}>
+      <ResponsiveContainer width="100%" height={210}>
         <BarChart data={data} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-          <XAxis dataKey="name" tick={{ fontSize: 12, fill: '#64748b' }} />
-          <YAxis tick={{ fontSize: 12, fill: '#64748b' }} tickFormatter={tickFormatter} width={60} />
-          <Tooltip content={<CustomTooltip />} />
-          <Bar dataKey="balance" radius={[6, 6, 0, 0]}>
+          <XAxis dataKey="name" tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
+          <YAxis tick={{ fontSize: 12, fill: '#64748b' }} tickFormatter={tickFormatter} width={60} axisLine={false} tickLine={false} />
+          <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(79,70,229,0.06)' }} />
+          <Bar dataKey="balance" radius={[8, 8, 0, 0]} barSize={38}>
             {data.map((entry, i) => (
-              <Cell key={i} fill={entry.balance >= 0 ? '#3b82f6' : '#ef4444'} />
+              <Cell key={i} fill={entry.balance >= 0 ? '#4f46e5' : '#dc2626'} />
             ))}
           </Bar>
         </BarChart>
       </ResponsiveContainer>
-
-      {/* Balance summary row */}
-      <div style={{ display: 'flex', gap: 28, marginTop: 12, paddingTop: 12, borderTop: '1px solid #f1f5f9', flexWrap: 'wrap' }}>
-        {accounts.map((a) => (
-          <div key={a.id} style={{ textAlign: 'center' }}>
-            <div style={{ fontWeight: 700, color: parseFloat(a.current_balance) >= 0 ? '#1e293b' : '#ef4444', fontSize: 15 }}>
-              {fmt(a.current_balance)}
-            </div>
-            <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>{a.name}</div>
-          </div>
-        ))}
-      </div>
     </div>
   );
 };
 
 // ── Account Form Modal ─────────────────────────────────────────
-const AccountModal = ({ initial, onSave, onClose, saving, error }) => {
-  const blank = { name: '', bank_name: '', account_number: '', account_type: 'checking', current_balance: '', currency_code: 'USD' };
+const AccountModal = ({ initial, onSave, onClose, saving, error, defaultCurrency = 'USD' }) => {
+  const blank = { name: '', bank_name: '', account_number: '', account_type: 'checking', current_balance: '', currency_code: defaultCurrency };
   const [form, setForm] = useState(initial || blank);
   const [balanceDisplay, setBalanceDisplay] = useState(() => {
     const v = (initial || blank).current_balance;
@@ -148,34 +215,55 @@ const AccountModal = ({ initial, onSave, onClose, saving, error }) => {
 
   return (
     <Overlay onClose={onClose}>
-      <ModalBox>
-        <ModalHeader title={initial ? 'Edit Account' : 'Add Bank Account'} onClose={onClose} />
+      <ModalBox width={540}>
+        <ModalHeader
+          title={initial ? 'Edit bank account' : 'Add bank account'}
+          subtitle={initial ? 'Update the details of this account' : 'Connect a checking, savings, credit card or cash account'}
+          onClose={onClose}
+        />
         <form onSubmit={(e) => { e.preventDefault(); onSave(form); }}>
-          <div className="form-group"><label>Account Name *</label><input className="form-control" required value={form.name} onChange={f('name')} placeholder="Main Checking" /></div>
-          <div className="form-group"><label>Bank Name</label><input className="form-control" value={form.bank_name} onChange={f('bank_name')} placeholder="Chase, Bank of America…" /></div>
+          <div className="form-group">
+            <label>Account name *</label>
+            <input className="form-control" required value={form.name} onChange={f('name')} placeholder="Main Checking" />
+          </div>
+          <div className="form-group">
+            <label>Bank name</label>
+            <input className="form-control" value={form.bank_name} onChange={f('bank_name')} placeholder="Chase, Bank of America…" />
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div className="form-group"><label>Account Number</label><input className="form-control" value={form.account_number} onChange={f('account_number')} placeholder="****1234" /></div>
             <div className="form-group">
-              <label>Account Type</label>
+              <label>Account number</label>
+              <input className="form-control" value={form.account_number} onChange={f('account_number')} placeholder="****1234" />
+            </div>
+            <div className="form-group">
+              <label>Account type</label>
               <select className="form-control" value={form.account_type} onChange={f('account_type')}>
                 {ACCOUNT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
             </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div className="form-group">
-              <label>Opening Balance</label>
+              <label>Opening balance</label>
               <input className="form-control" value={balanceDisplay} onChange={handleBalanceChange} onBlur={handleBalanceBlur} onFocus={handleBalanceFocus} placeholder="0.00" />
+              <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>e.g. 1,250,000.00</div>
+            </div>
+            <div className="form-group">
+              <label>Currency</label>
+              <CurrencyPicker
+                value={form.currency_code || defaultCurrency}
+                onChange={(code) => setForm({ ...form, currency_code: code })}
+                size="md"
+              />
               <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>
-                {parseFloat(form.current_balance) > 0
-                  ? `= ${new Intl.NumberFormat('en-US', { style: 'currency', currency: form.currency_code || 'USD' }).format(parseFloat(form.current_balance) || 0)}`
-                  : 'e.g. 1,250,000.00'}
+                Foreign-currency accounts are converted to your base currency in reports.
               </div>
             </div>
-            <div className="form-group"><label>Currency</label><input className="form-control" value={form.currency_code} onChange={f('currency_code')} placeholder="USD" maxLength={5} /></div>
           </div>
-          {error && <div style={{ background: '#fee2e2', color: '#991b1b', padding: '10px 14px', borderRadius: 8, marginBottom: 12, fontSize: 14 }}>{error}</div>}
+          {error && <ErrorPanel text={error} />}
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 16 }}>
             <button type="button" className="btn btn-outline" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save Account'}</button>
+            <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : (initial ? 'Save changes' : 'Add account')}</button>
           </div>
         </form>
       </ModalBox>
@@ -199,42 +287,72 @@ const ImportModal = ({ account, onImported, onClose }) => {
       setResult(res.data);
       onImported();
     } catch (err) {
-      setError(err.response?.data?.message || 'Import failed');
+      setError(buildErrorText(err, 'Import failed.'));
+      // Even on failure the server may have details — surface first row error
+      const rowErrs = err.response?.data?.details?.errors || err.response?.data?.row_errors;
+      if (Array.isArray(rowErrs) && rowErrs.length) {
+        setResult({ row_errors: rowErrs });
+      }
     } finally { setLoading(false); }
   };
 
   return (
     <Overlay onClose={onClose}>
-      <ModalBox>
-        <ModalHeader title={`Import Statement — ${account.name}`} onClose={onClose} />
+      <ModalBox width={600}>
+        <ModalHeader title={`Import statement — ${account.name}`} subtitle="Upload a CSV or Excel export from your bank" onClose={onClose} />
 
         <div
-          style={{ background: '#f8fafc', border: '2px dashed #cbd5e1', borderRadius: 10, padding: 30, textAlign: 'center', marginBottom: 20, cursor: 'pointer' }}
+          style={{ background: '#f8fafc', border: '2px dashed #cbd5e1', borderRadius: 12, padding: 32, textAlign: 'center', marginBottom: 20, cursor: 'pointer' }}
           onClick={() => fileRef.current?.click()}
         >
           <Upload size={32} style={{ color: '#94a3b8', marginBottom: 10 }} />
           <div style={{ fontWeight: 600, color: '#334155', marginBottom: 4 }}>{file ? file.name : 'Click to select your bank statement'}</div>
-          <div style={{ fontSize: 13, color: '#94a3b8' }}>Supports CSV files exported from your bank</div>
-          <input ref={fileRef} type="file" accept=".csv,.txt" style={{ display: 'none' }} onChange={(e) => setFile(e.target.files[0])} />
+          <div style={{ fontSize: 13, color: '#94a3b8' }}>Supports .csv, .xlsx and .xls files</div>
+          <input ref={fileRef} type="file" accept=".csv,.txt,.xlsx,.xls,.xlsm" style={{ display: 'none' }} onChange={(e) => setFile(e.target.files[0])} />
         </div>
 
-        <div style={{ background: '#eff6ff', borderRadius: 8, padding: '12px 16px', marginBottom: 16, fontSize: 13, color: '#1e40af' }}>
-          <strong>Supported CSV formats:</strong><br />
-          Your CSV should have columns: <code>Date, Description, Deposit, Withdrawal</code> or <code>Date, Description, Amount</code>.<br />
-          Most banks offer CSV export under "Download" or "Export transactions".
+        <div style={{ background: '#eff6ff', borderRadius: 10, padding: '14px 16px', marginBottom: 16, fontSize: 13, color: '#1e40af', display: 'flex', gap: 10 }}>
+          <Info size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+          <div>
+            <strong>Recognised columns:</strong> Date, Description (or Narration / Memo / Details), Amount (or Debit &amp; Credit / Withdrawal &amp; Deposit), and an optional Reference / Cheque no.<br />
+            <strong>Auto-categorise:</strong> if a description contains an invoice number or a Chart-of-Account identifier, the transaction is matched automatically.
+          </div>
         </div>
 
-        {error  && <div style={{ background: '#fee2e2', color: '#991b1b', padding: '10px 14px', borderRadius: 8, marginBottom: 12, fontSize: 14 }}>{error}</div>}
-        {result && (
-          <div style={{ background: '#d1fae5', color: '#065f46', padding: '12px 16px', borderRadius: 8, marginBottom: 12, fontSize: 14 }}>
-            ✅ <strong>{result.imported} transactions imported</strong>{result.skipped > 0 ? `, ${result.skipped} duplicates skipped` : ''}
+        {error && <ErrorPanel text={error} />}
+
+        {result && result.imported > 0 && (
+          <div style={{ background: '#ecfdf5', color: '#065f46', padding: '12px 16px', borderRadius: 10, marginBottom: 12, fontSize: 14, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+            <Sparkles size={16} style={{ marginTop: 2, flexShrink: 0 }} />
+            <div>
+              <strong>{result.message}</strong>
+              <div style={{ fontSize: 12, marginTop: 4, color: '#047857' }}>
+                {result.rows_examined} row{result.rows_examined === 1 ? '' : 's'} examined.
+              </div>
+            </div>
+          </div>
+        )}
+
+        {result && result.row_errors && result.row_errors.length > 0 && (
+          <div style={{ background: '#fef3c7', color: '#78350f', padding: '12px 16px', borderRadius: 10, marginBottom: 12, fontSize: 13, border: '1px solid #fcd34d' }}>
+            <div style={{ fontWeight: 700, marginBottom: 6, display: 'flex', gap: 8, alignItems: 'center' }}>
+              <AlertTriangle size={15} /> {result.row_errors.length} row{result.row_errors.length === 1 ? '' : 's'} could not be imported
+            </div>
+            <div style={{ maxHeight: 140, overflowY: 'auto', fontSize: 12 }}>
+              {result.row_errors.map((e, i) => (
+                <div key={i} style={{ padding: '5px 0', borderBottom: '1px solid #fde68a' }}>
+                  {e.row && <strong>Row {e.row}: </strong>}{e.reason}
+                  {e.remedy && <div style={{ color: '#92400e', marginTop: 2 }}>↳ {e.remedy}</div>}
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
           <button className="btn btn-outline" onClick={onClose}>Close</button>
           <button className="btn btn-primary" disabled={!file || loading} onClick={handleImport}>
-            <Upload size={16} />{loading ? 'Importing…' : 'Import Statement'}
+            <Upload size={16} />{loading ? 'Importing…' : 'Import statement'}
           </button>
         </div>
       </ModalBox>
@@ -274,7 +392,6 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
   const [uploadingReceipt, setUploadingReceipt] = useState(false);
   const [receiptError,     setReceiptError]   = useState('');
 
-  // Load existing splits when panel opens
   useEffect(() => {
     setLoadingSplits(true);
     bankingAPI.getSplits(transaction.id)
@@ -292,7 +409,6 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
       .finally(() => setLoadingSplits(false));
   }, [transaction.id]);
 
-  // Fetch match suggestions when match tab is active
   useEffect(() => {
     if (tab !== 'match') return;
     setLoadingSugg(true);
@@ -344,7 +460,7 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
         await bankingAPI.saveSplits(transaction.id, validSplits);
         await bankingAPI.updateTransaction(transaction.id, { status: 'categorized', notes });
         onSaved();
-      } catch (err) { setCatError(err.response?.data?.message || 'Failed to save splits.'); }
+      } catch (err) { setCatError(buildErrorText(err, 'Failed to save splits.')); }
       finally { setCatSaving(false); }
     } else {
       if (!coaAccountId) { setCatError('Please select an account to categorise this transaction.'); return; }
@@ -356,7 +472,7 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
           notes,
         });
         onSaved();
-      } catch (err) { setCatError(err.response?.data?.message || 'Failed to categorise transaction.'); }
+      } catch (err) { setCatError(buildErrorText(err, 'Failed to categorise transaction.')); }
       finally { setCatSaving(false); }
     }
   };
@@ -381,9 +497,9 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
         notes:         `Receipt for: ${transaction.description}`,
       });
       setReceipt(uploaded.data);
-      onSaved(); // refresh the transaction list so the paperclip shows
+      onSaved();
     } catch (err) {
-      setReceiptError(err.response?.data?.message || 'Upload failed');
+      setReceiptError(buildErrorText(err, 'Upload failed'));
     } finally { setUploadingReceipt(false); }
   };
 
@@ -391,7 +507,6 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
     if (!window.confirm('Detach this receipt? The file will remain in Files > Receipts.')) return;
     try {
       await bankingAPI.updateTransaction(transaction.id, { receipt_file_id: null });
-      // Note: we use a direct SQL approach via a separate mini-endpoint; for now we just clear local state
       setReceipt(null);
     } catch (err) { console.error(err); }
   };
@@ -402,8 +517,8 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
       style={{
         flex: 1, padding: '12px 8px', border: 'none', background: 'none', cursor: 'pointer',
         fontSize: 13, fontWeight: 600,
-        color: tab === id ? '#2563eb' : '#64748b',
-        borderBottom: `2px solid ${tab === id ? '#2563eb' : 'transparent'}`,
+        color: tab === id ? '#4f46e5' : '#64748b',
+        borderBottom: `2px solid ${tab === id ? '#4f46e5' : 'transparent'}`,
       }}
     >
       {label}
@@ -411,31 +526,33 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
   );
 
   return (
-    <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, overflow: 'hidden', position: 'sticky', top: 20 }}>
-      {/* Tab header */}
-      <div style={{ display: 'flex', borderBottom: '1px solid #e2e8f0', background: '#f8fafc' }}>
-        {tabBtn('match',      'Match Tran…')}
-        {tabBtn('categorize', 'Categorize…')}
+    <div style={{ background: '#fff', border: '1px solid #e6e8ee', borderRadius: 16, overflow: 'hidden', position: 'sticky', top: 20 }}>
+      <div style={{ display: 'flex', borderBottom: '1px solid #e6e8ee', background: '#f8fafc' }}>
+        {tabBtn('match',      'Match')}
+        {tabBtn('categorize', 'Categorize')}
         <button onClick={onClose} style={{ padding: '12px', border: 'none', background: 'none', cursor: 'pointer', color: '#94a3b8' }}>
           <X size={18} />
         </button>
       </div>
 
-      {/* Transaction summary */}
-      <div style={{ padding: '14px 18px', background: transaction.type === 'credit' ? '#f0fdf4' : '#fff7f7', borderBottom: '1px solid #e2e8f0' }}>
-        <div style={{ fontWeight: 700, fontSize: 14, color: '#1e293b', marginBottom: 2 }}>{transaction.description}</div>
+      <div style={{ padding: '16px 20px', background: transaction.type === 'credit' ? '#f0fdf4' : '#fff7ed', borderBottom: '1px solid #e6e8ee' }}>
+        <div style={{ fontWeight: 700, fontSize: 14, color: '#0f172a', marginBottom: 4 }}>{transaction.description}</div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ fontSize: 13, color: '#64748b' }}>{fmtDate(transaction.date)}</div>
-          <div style={{ fontWeight: 700, fontSize: 16, color: transaction.type === 'credit' ? '#10b981' : '#ef4444' }}>
+          <div style={{ fontWeight: 700, fontSize: 16, color: transaction.type === 'credit' ? '#0d9488' : '#dc2626' }}>
             {transaction.type === 'credit' ? '+' : '−'}{fmt(transaction.amount)}
           </div>
         </div>
         {transaction.reference && <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>Ref: {transaction.reference}</div>}
+        {transaction.auto_matched && (
+          <div style={{ fontSize: 11, color: '#4f46e5', marginTop: 6, display: 'inline-flex', alignItems: 'center', gap: 4, background: '#eef2ff', padding: '2px 8px', borderRadius: 12 }}>
+            <Sparkles size={11} /> Auto-matched
+          </div>
+        )}
       </div>
 
-      <div style={{ padding: 18, maxHeight: 'calc(100vh - 360px)', overflowY: 'auto' }}>
+      <div style={{ padding: 20, maxHeight: 'calc(100vh - 360px)', overflowY: 'auto' }}>
 
-        {/* ── Match Tab ── */}
         {tab === 'match' && (
           <div>
             <div style={{ fontWeight: 600, color: '#475569', marginBottom: 12, fontSize: 13 }}>
@@ -447,15 +564,15 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
             </div>
 
             {!loadingSugg && suggestions.map((s) => (
-              <div key={s.id} style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: '12px 14px', marginBottom: 10 }}>
+              <div key={s.id} style={{ border: '1px solid #e6e8ee', borderRadius: 12, padding: '12px 14px', marginBottom: 10 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
                   <div>
-                    <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', padding: '2px 7px', background: s.match_type === 'invoice' ? '#dbeafe' : '#fef3c7', color: s.match_type === 'invoice' ? '#1e40af' : '#92400e', borderRadius: 4 }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', padding: '2px 7px', background: s.match_type === 'invoice' ? '#eef2ff' : '#fef3c7', color: s.match_type === 'invoice' ? '#4f46e5' : '#92400e', borderRadius: 4 }}>
                       {s.match_type}
                     </span>
-                    <span style={{ fontWeight: 600, color: '#1e293b', marginLeft: 8, fontSize: 13 }}>{s.reference}</span>
+                    <span style={{ fontWeight: 600, color: '#0f172a', marginLeft: 8, fontSize: 13 }}>{s.reference}</span>
                   </div>
-                  <span style={{ fontWeight: 700, color: '#1e293b', fontSize: 14 }}>{fmt(s.amount)}</span>
+                  <span style={{ fontWeight: 700, color: '#0f172a', fontSize: 14 }}>{fmt(s.amount)}</span>
                 </div>
                 <div style={{ fontSize: 12, color: '#64748b', marginBottom: 8 }}>{s.party || '—'} · {fmtDate(s.date)}</div>
                 <button
@@ -482,23 +599,21 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
                 onClick={handleExclude}
                 disabled={!!matchSaving}
               >
-                <Ban size={14} /> Exclude Transaction
+                <Ban size={14} /> Exclude transaction
               </button>
             </div>
           </div>
         )}
 
-        {/* ── Categorize Tab ── */}
         {tab === 'categorize' && (
           <div>
             {loadingSplits ? (
               <div style={{ textAlign: 'center', padding: 20, color: '#94a3b8' }}>Loading…</div>
             ) : (
               <>
-                {/* Single account selector (hidden when itemised) */}
                 {!isItemized && (
                   <div className="form-group" style={{ marginBottom: 14 }}>
-                    <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>
+                    <label style={{ fontSize: 13, fontWeight: 600, color: '#334155', display: 'block', marginBottom: 6 }}>
                       Account *
                     </label>
                     <select
@@ -514,7 +629,6 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
                   </div>
                 )}
 
-                {/* Itemise toggle */}
                 <button
                   onClick={() => {
                     if (!isItemized && splits.every((s) => !s.coa_account_id)) {
@@ -527,21 +641,20 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
                   }}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 6,
-                    background: isItemized ? '#eff6ff' : '#f8fafc',
-                    border: `1px solid ${isItemized ? '#3b82f6' : '#e2e8f0'}`,
-                    borderRadius: 8, padding: '8px 14px', cursor: 'pointer',
+                    background: isItemized ? '#eef2ff' : '#f8fafc',
+                    border: `1px solid ${isItemized ? '#818cf8' : '#e2e8f0'}`,
+                    borderRadius: 10, padding: '8px 14px', cursor: 'pointer',
                     fontSize: 13, fontWeight: 600,
-                    color: isItemized ? '#2563eb' : '#475569', marginBottom: 16,
+                    color: isItemized ? '#4f46e5' : '#475569', marginBottom: 16,
                   }}
                 >
                   <Scissors size={14} />
-                  {isItemized ? 'Cancel Itemise' : 'Itemise (Split Transaction)'}
+                  {isItemized ? 'Cancel itemise' : 'Itemise (split transaction)'}
                 </button>
 
-                {/* Split lines */}
                 {isItemized && (
-                  <div style={{ background: '#f8fafc', borderRadius: 10, padding: 14, marginBottom: 16 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 10 }}>Split Lines</div>
+                  <div style={{ background: '#f8fafc', borderRadius: 12, padding: 14, marginBottom: 16 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 10 }}>Split lines</div>
 
                     {splits.map((split, i) => (
                       <div key={i} style={{ marginBottom: 10 }}>
@@ -569,7 +682,7 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
                           />
                           <button
                             onClick={() => removeSplit(i)}
-                            style={{ background: 'none', border: 'none', cursor: splits.length > 1 ? 'pointer' : 'not-allowed', color: splits.length > 1 ? '#ef4444' : '#cbd5e1', padding: 4 }}
+                            style={{ background: 'none', border: 'none', cursor: splits.length > 1 ? 'pointer' : 'not-allowed', color: splits.length > 1 ? '#dc2626' : '#cbd5e1', padding: 4 }}
                             disabled={splits.length <= 1}
                           >
                             <X size={14} />
@@ -587,17 +700,16 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
 
                     <button
                       onClick={addSplit}
-                      style={{ fontSize: 12, color: '#2563eb', background: 'none', border: '1px dashed #93c5fd', borderRadius: 6, padding: '5px 12px', cursor: 'pointer', width: '100%', marginTop: 4 }}
+                      style={{ fontSize: 12, color: '#4f46e5', background: 'none', border: '1px dashed #a5b4fc', borderRadius: 8, padding: '5px 12px', cursor: 'pointer', width: '100%', marginTop: 4 }}
                     >
-                      + Add Line
+                      + Add line
                     </button>
 
-                    {/* Running totals */}
                     <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #e2e8f0' }}>
                       {[
-                        { label: 'Transaction Total', val: fmt(txnAmount), color: '#1e293b' },
-                        { label: 'Allocated',         val: fmt(totalSplits), color: totalSplits > txnAmount + 0.01 ? '#ef4444' : '#10b981' },
-                        { label: 'Remaining',         val: fmt(Math.abs(remaining)), color: Math.abs(remaining) < 0.01 ? '#10b981' : '#f59e0b' },
+                        { label: 'Transaction total', val: fmt(txnAmount), color: '#0f172a' },
+                        { label: 'Allocated',         val: fmt(totalSplits), color: totalSplits > txnAmount + 0.01 ? '#dc2626' : '#0d9488' },
+                        { label: 'Remaining',         val: fmt(Math.abs(remaining)), color: Math.abs(remaining) < 0.01 ? '#0d9488' : '#f59e0b' },
                       ].map(({ label, val, color }) => (
                         <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#64748b', marginBottom: 4 }}>
                           <span>{label}:</span>
@@ -608,9 +720,8 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
                   </div>
                 )}
 
-                {/* Notes */}
                 <div className="form-group" style={{ marginBottom: 14 }}>
-                  <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>Notes</label>
+                  <label style={{ fontSize: 13, fontWeight: 600, color: '#334155', display: 'block', marginBottom: 6 }}>Notes</label>
                   <textarea
                     className="form-control"
                     style={{ minHeight: 60, resize: 'vertical', fontSize: 13 }}
@@ -620,25 +731,23 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
                   />
                 </div>
 
-                {/* Receipt / Proof of payment */}
                 <div style={{ marginBottom: 16 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <Paperclip size={14} /> Receipt / Proof
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Paperclip size={14} /> Receipt / proof
                   </div>
 
                   {receipt ? (
-                    /* Existing receipt */
-                    <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '10px 14px' }}>
+                    <div style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 10, padding: '10px 14px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <Paperclip size={15} style={{ color: '#10b981' }} />
+                          <Paperclip size={15} style={{ color: '#0d9488' }} />
                           <div>
                             <div style={{ fontWeight: 600, fontSize: 13, color: '#065f46' }}>{receipt.original_name || receipt.name}</div>
                             {receipt.reference && <div style={{ fontSize: 12, color: '#94a3b8' }}>Ref: {receipt.reference}</div>}
                           </div>
                         </div>
                         <div style={{ display: 'flex', gap: 6 }}>
-                          <a href={receipt.url} target="_blank" rel="noopener noreferrer" style={{ color: '#10b981', textDecoration: 'none' }} title="View">
+                          <a href={receipt.url} target="_blank" rel="noopener noreferrer" style={{ color: '#0d9488', textDecoration: 'none' }} title="View">
                             <ExternalLink size={14} />
                           </a>
                           <button onClick={handleRemoveReceipt} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 2 }} title="Detach">
@@ -647,13 +756,12 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
                         </div>
                       </div>
                       <div style={{ marginTop: 8 }}>
-                        <a href="/files" style={{ fontSize: 12, color: '#3b82f6', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <a href="/files" style={{ fontSize: 12, color: '#4f46e5', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                           <ExternalLink size={11} /> View in Files → Receipts
                         </a>
                       </div>
                     </div>
                   ) : (
-                    /* Upload new receipt */
                     <div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, marginBottom: 8 }}>
                         <input
@@ -667,7 +775,7 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
                           type="button"
                           onClick={() => receiptRef.current?.click()}
                           disabled={uploadingReceipt}
-                          style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '6px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: '#475569', whiteSpace: 'nowrap' }}
+                          style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: '6px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: '#475569', whiteSpace: 'nowrap' }}
                         >
                           <Paperclip size={14} />
                           {uploadingReceipt ? 'Uploading…' : 'Attach'}
@@ -686,18 +794,10 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
                     </div>
                   )}
 
-                  {receiptError && (
-                    <div style={{ background: '#fee2e2', color: '#991b1b', padding: '8px 12px', borderRadius: 6, marginTop: 8, fontSize: 12 }}>
-                      {receiptError}
-                    </div>
-                  )}
+                  {receiptError && <ErrorPanel text={receiptError} />}
                 </div>
 
-                {catError && (
-                  <div style={{ background: '#fee2e2', color: '#991b1b', padding: '10px 14px', borderRadius: 8, marginBottom: 12, fontSize: 13 }}>
-                    {catError}
-                  </div>
-                )}
+                {catError && <ErrorPanel text={catError} />}
 
                 <button
                   className="btn btn-primary"
@@ -705,7 +805,7 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
                   onClick={handleSaveCategorize}
                   disabled={catSaving}
                 >
-                  {catSaving ? 'Saving…' : 'Save Categorisation'}
+                  {catSaving ? 'Saving…' : 'Save categorisation'}
                 </button>
               </>
             )}
@@ -718,7 +818,7 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
 
 // ── Main Banking Page ──────────────────────────────────────────
 const Banking = () => {
-  const { fmt: fmtRaw } = useCurrency();
+  const { fmt: fmtRaw, currency: baseCurrency } = useCurrency();
   const fmt = (n) => fmtRaw(Math.abs(n));
 
   const [accounts,       setAccounts]       = useState([]);
@@ -728,16 +828,16 @@ const Banking = () => {
   const [statusFilter,   setStatusFilter]   = useState('all');
   const [loadingAccts,   setLoadingAccts]   = useState(true);
   const [loadingTxns,    setLoadingTxns]    = useState(false);
-  const [modal,          setModal]          = useState(null); // null|'addAccount'|'editAccount'|'import'
+  const [modal,          setModal]          = useState(null);
   const [editAccountData, setEditAccountData] = useState(null);
   const [saving,         setSaving]         = useState(false);
   const [acctError,      setAcctError]      = useState('');
+  const [autoRunning,    setAutoRunning]    = useState(false);
+  const [autoResult,     setAutoResult]     = useState(null);
 
-  // Panel state
-  const [activeTxn,   setActiveTxn]   = useState(null); // transaction open in panel
+  const [activeTxn,   setActiveTxn]   = useState(null);
   const [coaAccounts, setCoaAccounts] = useState([]);
 
-  // Load chart of accounts for categorisation dropdown
   useEffect(() => {
     accountAPI.getAll()
       .then((res) => setCoaAccounts(res.data.accounts || []))
@@ -773,7 +873,7 @@ const Banking = () => {
       await fetchAccounts();
       setSelectedAccount(res.data);
       setModal(null);
-    } catch (err) { setAcctError(err.response?.data?.message || 'Failed to create account'); }
+    } catch (err) { setAcctError(buildErrorText(err, 'Failed to create account')); }
     finally { setSaving(false); }
   };
 
@@ -783,7 +883,7 @@ const Banking = () => {
       await bankingAPI.updateAccount(editAccountData.id, form);
       await fetchAccounts();
       setModal(null);
-    } catch (err) { setAcctError(err.response?.data?.message || 'Failed to update'); }
+    } catch (err) { setAcctError(buildErrorText(err, 'Failed to update')); }
     finally { setSaving(false); }
   };
 
@@ -810,10 +910,32 @@ const Banking = () => {
     fetchTransactions();
   };
 
-  // Reconciliation progress: matched + categorized + excluded count as processed
+  const handleAutoCategorise = async () => {
+    if (!selectedAccount) return;
+    setAutoRunning(true); setAutoResult(null);
+    try {
+      const res = await bankingAPI.autoCategorise(selectedAccount.id);
+      setAutoResult(res.data);
+      fetchTransactions();
+      setTimeout(() => setAutoResult(null), 5000);
+    } catch (err) {
+      setAutoResult({ error: buildErrorText(err, 'Auto-categorisation failed') });
+    } finally { setAutoRunning(false); }
+  };
+
   const reconciliationPercent = stats && parseInt(stats.total) > 0
     ? Math.round(((parseInt(stats.matched || 0) + parseInt(stats.excluded || 0) + parseInt(stats.categorized || 0)) / parseInt(stats.total)) * 100)
     : 0;
+
+  const totals = useMemo(() => {
+    const inBase = accounts.filter((a) => a.currency_code === baseCurrency);
+    const totalBalance = inBase.reduce((s, a) => s + (parseFloat(a.current_balance) || 0), 0);
+    return {
+      totalBalance,
+      accountCount: accounts.length,
+      inBaseCount: inBase.length,
+    };
+  }, [accounts, baseCurrency]);
 
   const panelOpen = !!activeTxn;
 
@@ -822,17 +944,52 @@ const Banking = () => {
       <Header title="Banking" subtitle="Manage accounts, import statements and reconcile transactions" />
 
       <div className="page-content">
-        {/* Balance bar chart — shown whenever there are accounts */}
+        {/* KPI ribbon */}
         {!loadingAccts && accounts.length > 0 && (
-          <BalancesChart accounts={accounts} fmt={fmt} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14, marginBottom: 20 }}>
+            <MetricCard
+              icon={Wallet}
+              label={`Total balance · ${baseCurrency}`}
+              value={fmt(totals.totalBalance)}
+              tone="accent"
+              delta={totals.inBaseCount < totals.accountCount
+                ? <span>Excludes {totals.accountCount - totals.inBaseCount} foreign-currency account{totals.accountCount - totals.inBaseCount > 1 ? 's' : ''}</span>
+                : null}
+            />
+            <MetricCard
+              icon={ArrowUpRight}
+              label="Money in (selected account)"
+              value={stats ? fmt(stats.total_credits || 0) : '—'}
+              tone="positive"
+            />
+            <MetricCard
+              icon={ArrowDownRight}
+              label="Money out (selected account)"
+              value={stats ? fmt(stats.total_debits || 0) : '—'}
+              tone="negative"
+            />
+            <MetricCard
+              icon={CheckCircle}
+              label="Reconciled"
+              value={`${reconciliationPercent}%`}
+              tone={reconciliationPercent === 100 ? 'positive' : 'neutral'}
+              delta={stats && <span>{stats.matched || 0} matched · {stats.categorized || 0} categorised · {stats.unmatched || 0} to review</span>}
+            />
+          </div>
         )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: panelOpen ? '240px 1fr 400px' : '280px 1fr', gap: 20, alignItems: 'start' }}>
+        {!loadingAccts && accounts.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <BalancesChart accounts={accounts} fmt={fmt} />
+          </div>
+        )}
+
+        <div style={{ display: 'grid', gridTemplateColumns: panelOpen ? '260px 1fr 400px' : '300px 1fr', gap: 20, alignItems: 'start' }}>
 
           {/* ── Left: Account List ── */}
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-              <span style={{ fontWeight: 700, color: '#1e293b', fontSize: 15 }}>Accounts</span>
+              <span style={{ fontWeight: 700, color: '#0f172a', fontSize: 15, letterSpacing: -0.1 }}>Accounts</span>
               <button className="btn btn-primary" style={{ padding: '6px 14px', fontSize: 13 }} onClick={() => { setAcctError(''); setModal('addAccount'); }}>
                 <Plus size={15} /> Add
               </button>
@@ -841,115 +998,159 @@ const Banking = () => {
             {loadingAccts ? (
               <div style={{ color: '#94a3b8', textAlign: 'center', padding: 20 }}>Loading…</div>
             ) : accounts.length === 0 ? (
-              <div style={{ background: '#fff', border: '1px dashed #cbd5e1', borderRadius: 12, padding: 30, textAlign: 'center' }}>
-                <Building2 size={32} style={{ color: '#cbd5e1', marginBottom: 10 }} />
-                <div style={{ color: '#94a3b8', fontSize: 14 }}>No accounts yet.<br />Add your first bank account.</div>
+              <div style={{ background: '#fff', border: '1px dashed #cbd5e1', borderRadius: 14, padding: 32, textAlign: 'center' }}>
+                <Building2 size={34} style={{ color: '#cbd5e1', marginBottom: 12 }} />
+                <div style={{ color: '#64748b', fontSize: 14, marginBottom: 12, fontWeight: 600 }}>No accounts yet</div>
+                <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 14 }}>Add your first bank or cash account to get started.</div>
+                <button className="btn btn-primary" onClick={() => setModal('addAccount')}>
+                  <Plus size={15} /> Add account
+                </button>
               </div>
             ) : (
-              accounts.map((acct) => (
-                <div
-                  key={acct.id}
-                  onClick={() => { setSelectedAccount(acct); setActiveTxn(null); }}
-                  style={{
-                    background: '#fff',
-                    border: `2px solid ${selectedAccount?.id === acct.id ? '#3b82f6' : '#e2e8f0'}`,
-                    borderRadius: 12, padding: '14px 16px', marginBottom: 10, cursor: 'pointer', transition: 'all 0.15s',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, color: '#1e293b', fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{acct.name}</div>
-                      <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>{acct.bank_name || ACCOUNT_TYPES.find((t) => t.value === acct.account_type)?.label}</div>
-                      <div style={{ fontWeight: 700, color: '#1e293b', marginTop: 6, fontSize: 15 }}>{fmt(acct.current_balance)}</div>
-                      {parseInt(acct.unmatched_count) > 0 && (
-                        <div style={{ fontSize: 12, color: '#f59e0b', marginTop: 4, fontWeight: 600 }}>⚠ {acct.unmatched_count} unmatched</div>
-                      )}
-                    </div>
-                    <div style={{ display: 'flex', gap: 4, flexShrink: 0, marginLeft: 6 }}>
-                      <button className="btn-icon" style={{ padding: 4 }} onClick={(e) => { e.stopPropagation(); setEditAccountData(acct); setAcctError(''); setModal('editAccount'); }} title="Edit">
-                        <Edit2 size={14} />
-                      </button>
-                      <button className="btn-icon text-danger" style={{ padding: 4 }} onClick={(e) => { e.stopPropagation(); handleDeleteAccount(acct.id); }} title="Delete">
-                        <Trash2 size={14} />
-                      </button>
+              accounts.map((acct) => {
+                const isSelected = selectedAccount?.id === acct.id;
+                return (
+                  <div
+                    key={acct.id}
+                    onClick={() => { setSelectedAccount(acct); setActiveTxn(null); }}
+                    style={{
+                      background: '#fff',
+                      border: `1px solid ${isSelected ? '#4f46e5' : '#e6e8ee'}`,
+                      boxShadow: isSelected ? '0 6px 22px rgba(79,70,229,0.14)' : '0 1px 2px rgba(15,23,42,0.03)',
+                      borderRadius: 14,
+                      padding: '14px 16px',
+                      marginBottom: 10,
+                      cursor: 'pointer',
+                      transition: 'all 0.15s',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                          <span style={{ fontSize: 15 }}>{currencyFlag(acct.currency_code) || '💳'}</span>
+                          <span style={{ fontWeight: 700, color: '#0f172a', fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{acct.name}</span>
+                        </div>
+                        <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>
+                          {acct.bank_name || ACCOUNT_TYPES.find((t) => t.value === acct.account_type)?.label}
+                          {' · '}{acct.currency_code}
+                        </div>
+                        <div style={{ fontWeight: 700, color: parseFloat(acct.current_balance) < 0 ? '#dc2626' : '#0f172a', marginTop: 8, fontSize: 16, letterSpacing: -0.2 }}>
+                          {new Intl.NumberFormat('en-US', { style: 'currency', currency: acct.currency_code || 'USD' }).format(parseFloat(acct.current_balance) || 0)}
+                        </div>
+                        {parseInt(acct.unmatched_count) > 0 && (
+                          <div style={{ fontSize: 11, color: '#b45309', marginTop: 6, fontWeight: 600, background: '#fef3c7', display: 'inline-block', padding: '2px 8px', borderRadius: 12 }}>
+                            {acct.unmatched_count} to review
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', gap: 4, flexShrink: 0, marginLeft: 6 }}>
+                        <button className="btn-icon" style={{ padding: 4 }} onClick={(e) => { e.stopPropagation(); setEditAccountData(acct); setAcctError(''); setModal('editAccount'); }} title="Edit">
+                          <Edit2 size={14} />
+                        </button>
+                        <button className="btn-icon text-danger" style={{ padding: 4 }} onClick={(e) => { e.stopPropagation(); handleDeleteAccount(acct.id); }} title="Delete">
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
 
           {/* ── Centre: Transactions ── */}
           <div>
             {!selectedAccount ? (
-              <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, padding: '60px 20px', textAlign: 'center' }}>
-                <div style={{ fontSize: 40, marginBottom: 12 }}>🏦</div>
-                <div style={{ fontWeight: 600, color: '#94a3b8', fontSize: 16 }}>Select an account to view transactions</div>
+              <div style={{ background: '#fff', border: '1px solid #e6e8ee', borderRadius: 16, padding: '80px 20px', textAlign: 'center' }}>
+                <Building2 size={44} style={{ color: '#cbd5e1', marginBottom: 14 }} />
+                <div style={{ fontWeight: 700, color: '#0f172a', fontSize: 16, marginBottom: 4 }}>Choose an account</div>
+                <div style={{ color: '#94a3b8', fontSize: 13 }}>Pick an account on the left to see its transactions.</div>
               </div>
             ) : (
               <>
-                {/* Header row */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18, gap: 12, flexWrap: 'wrap' }}>
                   <div>
-                    <div style={{ fontWeight: 700, fontSize: 18, color: '#1e293b' }}>{selectedAccount.name}</div>
-                    {selectedAccount.bank_name && <div style={{ fontSize: 13, color: '#94a3b8' }}>{selectedAccount.bank_name}</div>}
+                    <div style={{ fontWeight: 700, fontSize: 20, color: '#0f172a', letterSpacing: -0.2 }}>{selectedAccount.name}</div>
+                    <div style={{ fontSize: 13, color: '#64748b' }}>
+                      {selectedAccount.bank_name && <>{selectedAccount.bank_name} · </>}
+                      {selectedAccount.currency_code}
+                      {selectedAccount.account_number && <> · ••••{String(selectedAccount.account_number).slice(-4)}</>}
+                    </div>
                   </div>
-                  <button className="btn btn-primary" onClick={() => setModal('import')}>
-                    <Upload size={16} /> Import Statement
-                  </button>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      className="btn btn-outline"
+                      onClick={handleAutoCategorise}
+                      disabled={autoRunning}
+                      title="Re-run auto-categorisation on unmatched transactions"
+                    >
+                      <Sparkles size={16} />
+                      {autoRunning ? 'Working…' : 'Auto-categorise'}
+                    </button>
+                    <button className="btn btn-primary" onClick={() => setModal('import')}>
+                      <Upload size={16} /> Import statement
+                    </button>
+                  </div>
                 </div>
 
-                {/* Reconciliation progress */}
+                {autoResult && (
+                  <div style={{
+                    background: autoResult.error ? '#fef2f2' : '#eef2ff',
+                    color:      autoResult.error ? '#991b1b' : '#4338ca',
+                    padding: '10px 16px',
+                    borderRadius: 10,
+                    marginBottom: 16,
+                    fontSize: 13,
+                    border: `1px solid ${autoResult.error ? '#fecaca' : '#c7d2fe'}`,
+                  }}>
+                    {autoResult.error || autoResult.message}
+                  </div>
+                )}
+
                 {stats && parseInt(stats.total) > 0 && (
-                  <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: '16px 20px', marginBottom: 20 }}>
+                  <div style={{ background: '#fff', border: '1px solid #e6e8ee', borderRadius: 14, padding: '16px 20px', marginBottom: 20 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
-                      <span style={{ fontWeight: 600, color: '#1e293b' }}>Reconciliation Progress</span>
-                      <span style={{ fontWeight: 700, color: reconciliationPercent === 100 ? '#10b981' : '#f59e0b' }}>{reconciliationPercent}%</span>
+                      <span style={{ fontWeight: 700, color: '#0f172a' }}>Reconciliation progress</span>
+                      <span style={{ fontWeight: 700, color: reconciliationPercent === 100 ? '#0d9488' : '#4f46e5' }}>{reconciliationPercent}%</span>
                     </div>
-                    <div style={{ background: '#f1f5f9', borderRadius: 999, height: 8, overflow: 'hidden' }}>
-                      <div style={{ height: '100%', background: reconciliationPercent === 100 ? '#10b981' : '#3b82f6', width: `${reconciliationPercent}%`, transition: 'width 0.4s ease', borderRadius: 999 }} />
-                    </div>
-                    <div style={{ display: 'flex', gap: 20, marginTop: 12, flexWrap: 'wrap' }}>
-                      {[
-                        { label: 'Unmatched',   val: stats.unmatched,                       color: '#f59e0b' },
-                        { label: 'Matched',     val: stats.matched,                         color: '#10b981' },
-                        { label: 'Categorized', val: stats.categorized || 0,                color: '#3b82f6' },
-                        { label: 'Excluded',    val: stats.excluded,                        color: '#94a3b8' },
-                        { label: 'Money In',    val: fmt(stats.total_credits),              color: '#10b981' },
-                        { label: 'Money Out',   val: fmt(stats.total_debits),               color: '#ef4444' },
-                      ].map(({ label, val, color }) => (
-                        <div key={label} style={{ textAlign: 'center' }}>
-                          <div style={{ fontWeight: 700, color, fontSize: 15 }}>{val}</div>
-                          <div style={{ fontSize: 11, color: '#94a3b8' }}>{label}</div>
-                        </div>
-                      ))}
+                    <div style={{ background: '#f1f5f9', borderRadius: 999, height: 10, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', background: reconciliationPercent === 100 ? 'linear-gradient(90deg,#22c55e,#0d9488)' : 'linear-gradient(90deg,#818cf8,#4f46e5)', width: `${reconciliationPercent}%`, transition: 'width 0.4s ease', borderRadius: 999 }} />
                     </div>
                   </div>
                 )}
 
-                {/* Filter tabs */}
+                {/* Filter chips */}
                 <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
-                  {['all', 'unmatched', 'matched', 'categorized', 'excluded'].map((s) => (
-                    <button
-                      key={s}
-                      onClick={() => setStatusFilter(s)}
-                      style={{
-                        padding: '6px 14px', borderRadius: 20, border: '1px solid', fontSize: 13, fontWeight: 600, cursor: 'pointer',
-                        borderColor: statusFilter === s ? '#3b82f6' : '#e2e8f0',
-                        background:  statusFilter === s ? '#eff6ff'  : '#fff',
-                        color:       statusFilter === s ? '#2563eb'  : '#64748b',
-                      }}
-                    >
-                      {s.charAt(0).toUpperCase() + s.slice(1)}
-                    </button>
-                  ))}
+                  {['all', 'unmatched', 'matched', 'categorized', 'excluded'].map((s) => {
+                    const count = s === 'all' ? stats?.total : stats?.[s];
+                    const active = statusFilter === s;
+                    return (
+                      <button
+                        key={s}
+                        onClick={() => setStatusFilter(s)}
+                        style={{
+                          padding: '7px 14px', borderRadius: 999, border: '1px solid', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                          borderColor: active ? '#4f46e5' : '#e2e8f0',
+                          background:  active ? '#eef2ff'  : '#fff',
+                          color:       active ? '#4338ca'  : '#64748b',
+                          display: 'inline-flex', alignItems: 'center', gap: 8,
+                        }}
+                      >
+                        {s.charAt(0).toUpperCase() + s.slice(1)}
+                        {count !== undefined && (
+                          <span style={{ background: active ? '#fff' : '#f1f5f9', color: active ? '#4338ca' : '#64748b', padding: '1px 8px', borderRadius: 999, fontSize: 11 }}>
+                            {count}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
                   <button onClick={fetchTransactions} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }} title="Refresh">
                     <RefreshCw size={16} />
                   </button>
                 </div>
 
-                {/* Transactions table */}
-                <div className="card">
+                <div className="card" style={{ borderRadius: 16, overflow: 'hidden', border: '1px solid #e6e8ee' }}>
                   <div style={{ overflowX: 'auto' }}>
                     <table className="table">
                       <thead>
@@ -968,8 +1169,8 @@ const Banking = () => {
                         ) : transactions.length === 0 ? (
                           <tr><td colSpan="6">
                             <div style={{ textAlign: 'center', padding: '50px 20px' }}>
-                              <div style={{ fontSize: 40, marginBottom: 12 }}>🏦</div>
-                              <div style={{ fontWeight: 600, color: '#1e293b', marginBottom: 6 }}>
+                              <Upload size={38} style={{ color: '#cbd5e1', marginBottom: 12 }} />
+                              <div style={{ fontWeight: 700, color: '#0f172a', marginBottom: 6 }}>
                                 {statusFilter !== 'all' ? `No ${statusFilter} transactions` : 'No transactions yet'}
                               </div>
                               <div style={{ color: '#94a3b8', fontSize: 14 }}>
@@ -983,47 +1184,46 @@ const Banking = () => {
                             onClick={() => setActiveTxn(activeTxn?.id === txn.id ? null : txn)}
                             style={{
                               cursor: 'pointer',
-                              background: activeTxn?.id === txn.id ? '#eff6ff' : 'transparent',
+                              background: activeTxn?.id === txn.id ? '#eef2ff' : 'transparent',
                               transition: 'background 0.1s',
                             }}
                           >
                             <td style={{ whiteSpace: 'nowrap', color: '#64748b', fontSize: 13 }}>{fmtDate(txn.date)}</td>
                             <td style={{ maxWidth: panelOpen ? 160 : 280 }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <span style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#1e293b', flex: 1 }}>{txn.description}</span>
+                                <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#0f172a', flex: 1 }}>{txn.description}</span>
                                 {txn.receipt_file_id && (
-                                  <Paperclip size={12} style={{ color: '#10b981', flexShrink: 0 }} title="Receipt attached" />
+                                  <Paperclip size={12} style={{ color: '#0d9488', flexShrink: 0 }} title="Receipt attached" />
+                                )}
+                                {txn.auto_matched && (
+                                  <Sparkles size={12} style={{ color: '#4f46e5', flexShrink: 0 }} title="Auto-matched during import" />
                                 )}
                               </div>
                               {txn.reference        && <div style={{ fontSize: 12, color: '#94a3b8' }}>Ref: {txn.reference}</div>}
-                              {txn.coa_account_name && <div style={{ fontSize: 12, color: '#3b82f6' }}>{txn.coa_account_code} – {txn.coa_account_name}</div>}
+                              {txn.coa_account_name && <div style={{ fontSize: 12, color: '#4f46e5' }}>{txn.coa_account_code} – {txn.coa_account_name}</div>}
                               {txn.notes            && <div style={{ fontSize: 12, color: '#94a3b8', fontStyle: 'italic' }}>{txn.notes}</div>}
                             </td>
-                            {/* Deposit column (credit) */}
-                            <td className="text-right" style={{ fontWeight: 700, whiteSpace: 'nowrap', color: '#10b981', fontSize: 14 }}>
+                            <td className="text-right" style={{ fontWeight: 700, whiteSpace: 'nowrap', color: '#0d9488', fontSize: 14 }}>
                               {txn.type === 'credit' ? fmt(txn.amount) : ''}
                             </td>
-                            {/* Withdrawal column (debit) */}
-                            <td className="text-right" style={{ fontWeight: 700, whiteSpace: 'nowrap', color: '#ef4444', fontSize: 14 }}>
+                            <td className="text-right" style={{ fontWeight: 700, whiteSpace: 'nowrap', color: '#dc2626', fontSize: 14 }}>
                               {txn.type === 'debit' ? fmt(txn.amount) : ''}
                             </td>
                             <td><StatusBadge status={txn.status} /></td>
                             <td className="text-right" style={{ whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
-                              {/* Categorise / match button */}
                               <button
                                 className="btn-icon"
                                 title="Categorise / Match"
                                 onClick={(e) => { e.stopPropagation(); setActiveTxn(activeTxn?.id === txn.id ? null : txn); }}
-                                style={{ color: activeTxn?.id === txn.id ? '#2563eb' : '#64748b' }}
+                                style={{ color: activeTxn?.id === txn.id ? '#4f46e5' : '#64748b' }}
                               >
                                 <Tag size={15} />
                               </button>
-                              {/* Unmatch button for matched transactions */}
                               {txn.status === 'matched' && (
                                 <button
                                   className="btn-icon"
                                   title="Unmatch"
-                                  style={{ color: '#10b981' }}
+                                  style={{ color: '#0d9488' }}
                                   onClick={(e) => { e.stopPropagation(); handleUnmatch(txn); }}
                                 >
                                   <CheckCircle size={15} />
@@ -1044,8 +1244,7 @@ const Banking = () => {
                   </div>
                   {transactions.length > 0 && (
                     <div style={{ padding: '12px 20px', borderTop: '1px solid #f1f5f9', background: '#f8fafc', fontSize: 13, color: '#64748b' }}>
-                      {transactions.length} transaction{transactions.length !== 1 ? 's' : ''}
-                      {panelOpen && <span style={{ marginLeft: 12, color: '#3b82f6' }}>Click a row or <Tag size={12} style={{ display: 'inline' }} /> to open the categorise panel</span>}
+                      Showing {transactions.length} transaction{transactions.length !== 1 ? 's' : ''}
                     </div>
                   )}
                 </div>
@@ -1053,7 +1252,6 @@ const Banking = () => {
             )}
           </div>
 
-          {/* ── Right: Categorise / Match Panel ── */}
           {panelOpen && (
             <CategorizePanel
               key={activeTxn.id}
@@ -1069,10 +1267,23 @@ const Banking = () => {
 
       {/* Modals */}
       {modal === 'addAccount' && (
-        <AccountModal onSave={handleCreateAccount} onClose={() => setModal(null)} saving={saving} error={acctError} />
+        <AccountModal
+          onSave={handleCreateAccount}
+          onClose={() => setModal(null)}
+          saving={saving}
+          error={acctError}
+          defaultCurrency={baseCurrency}
+        />
       )}
       {modal === 'editAccount' && editAccountData && (
-        <AccountModal initial={editAccountData} onSave={handleEditAccount} onClose={() => setModal(null)} saving={saving} error={acctError} />
+        <AccountModal
+          initial={editAccountData}
+          onSave={handleEditAccount}
+          onClose={() => setModal(null)}
+          saving={saving}
+          error={acctError}
+          defaultCurrency={baseCurrency}
+        />
       )}
       {modal === 'import' && selectedAccount && (
         <ImportModal

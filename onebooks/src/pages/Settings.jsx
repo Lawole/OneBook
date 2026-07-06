@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, CheckCircle } from 'lucide-react';
+import { Save, CheckCircle, Lock } from 'lucide-react';
 import Header from '../components/Header';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
@@ -45,13 +45,14 @@ const Settings = () => {
     setSaving(true);
     setError('');
     try {
+      // Base currency is chosen at signup and intentionally omitted
+      // here — changing it after transactions exist would corrupt reports.
       await api.put('/company', {
         name: form.name,
         email: form.email,
         phone: form.phone,
         address: form.address,
         tax_rate: parseFloat(form.tax_rate) || 0,
-        base_currency: form.base_currency,
       });
       // Update auth context so header shows new name
       const updatedUser = { ...(user || {}), name: form.name, email: form.email, tax_rate: parseFloat(form.tax_rate) || 0 };
@@ -117,12 +118,26 @@ const Settings = () => {
             <div className="card-body">
               <div className="form-row">
                 <div className="form-group">
-                  <label>Base Currency</label>
-                  <select name="base_currency" className="form-control" value={form.base_currency} onChange={handleChange}>
-                    {WORLD_CURRENCIES.map(c => (
-                      <option key={c.code} value={c.code}>{c.code} — {c.label}</option>
-                    ))}
-                  </select>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    Base Currency <Lock size={12} style={{ color: '#94a3b8' }} />
+                  </label>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '10px 14px', background: '#f8fafc',
+                    border: '1px solid #e2e8f0', borderRadius: 10,
+                    color: '#334155', fontSize: 14, fontWeight: 600,
+                  }}>
+                    <span style={{ fontSize: 18 }}>
+                      {WORLD_CURRENCIES.find(c => c.code === form.base_currency)?.flag || '🌐'}
+                    </span>
+                    <span>{form.base_currency}</span>
+                    <span style={{ color: '#64748b', fontWeight: 500, fontSize: 13 }}>
+                      — {WORLD_CURRENCIES.find(c => c.code === form.base_currency)?.label || form.base_currency}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 6, lineHeight: 1.5 }}>
+                    Your OneBook account uses a single, uniform currency chosen when you registered. This keeps invoices, expenses, and reports consistent. Contact support if you need to change it.
+                  </div>
                 </div>
                 <div className="form-group">
                   <label>Default VAT / Tax Rate (%)</label>
