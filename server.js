@@ -9,6 +9,8 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const compression = require('compression');
 
+const { runMigrations } = require('./config/migrations');
+
 const authRoutes = require('./routes/auth');
 const companyRoutes = require('./routes/company');
 const currencyRoutes = require('./routes/currency');
@@ -27,8 +29,25 @@ const filesRoutes      = require('./routes/files');
 
 const app = express();
 
+// Run the idempotent schema migration exactly once per process/instance,
+// then reuse the same promise on every subsequent request. Works for
+// both `app.listen` (local dev) and serverless (Vercel) deployments —
+// in the latter, `app.listen` never runs, so this is our only hook.
+let migrationPromise = null;
+function ensureMigrated() {
+  if (!migrationPromise) migrationPromise = runMigrations().catch((e) => {
+    console.error('[migration] failed at boot:', e.message);
+  });
+  return migrationPromise;
+}
+
 // Middleware
 app.use(helmet());
+
+app.use(async (req, res, next) => {
+  try { await ensureMigrated(); } catch (_) { /* logged already */ }
+  next();
+});
 
 // Support multiple comma-separated origins e.g. "https://a.vercel.app,https://b.vercel.app"
 const rawOrigins = process.env.FRONTEND_URL || '';
@@ -91,9 +110,13 @@ app.use((req, res) => {
 });
 
 const PORT = process.env.PORT || 5001;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`OneBooks Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  // Apply idempotent schema updates (auto-match identifier, auto_matched
+  // flag, etc.) so new features work on existing databases without
+  // requiring the operator to run SQL manually.
+  try { await runMigrations(); } catch (e) { console.error('[migration] fatal:', e.message); }
 });
 
 module.exports = app;

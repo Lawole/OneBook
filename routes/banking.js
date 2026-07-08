@@ -545,13 +545,21 @@ async function autoCategoriseTransaction(txn, companyId) {
   }
 
   // ── 3. Match to a Chart-of-Accounts identifier
-  const coa = await pool.query(
-    `SELECT id, identifier FROM chart_of_accounts
-     WHERE company_id = $1
-       AND identifier IS NOT NULL
-       AND identifier <> ''`,
-    [companyId]
-  );
+  // Guard against the column not existing yet (older schema) so a
+  // half-migrated database still allows imports to succeed — the row will
+  // simply come back unmatched instead of aborting the whole import.
+  let coa = { rows: [] };
+  try {
+    coa = await pool.query(
+      `SELECT id, identifier FROM chart_of_accounts
+       WHERE company_id = $1
+         AND identifier IS NOT NULL
+         AND identifier <> ''`,
+      [companyId]
+    );
+  } catch (err) {
+    if (err.code !== '42703') throw err; // 42703 = undefined_column
+  }
   for (const row of coa.rows) {
     const ident = String(row.identifier).toLowerCase().trim();
     if (!ident) continue;
@@ -755,6 +763,16 @@ router.post('/accounts/:id/import', authMiddleware, upload.single('statement'), 
     let autoMatched = 0;
     const rowErrors = [];
 
+    // Detect whether the auto_matched column exists (older schema tolerance)
+    let hasAutoMatched = true;
+    try {
+      const check = await pool.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_name = 'bank_transactions' AND column_name = 'auto_matched' LIMIT 1`
+      );
+      hasAutoMatched = check.rows.length > 0;
+    } catch { /* assume present */ }
+
     for (const txn of transactions) {
       try {
         // Duplicate detection: same account + date + amount + description
@@ -767,23 +785,40 @@ router.post('/accounts/:id/import', authMiddleware, upload.single('statement'), 
         // Try to auto-categorise / auto-match
         const auto = await autoCategoriseTransaction(txn, req.companyId);
 
-        const inserted = await pool.query(
-          `INSERT INTO bank_transactions
-             (bank_account_id, company_id, date, description, amount, type,
-              status, reference, coa_account_id, matched_type, matched_id, auto_matched, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
-           RETURNING id, amount, description, type`,
-          [
-            req.params.id, req.companyId, txn.date, txn.description,
-            txn.amount, txn.type,
-            auto ? auto.status : 'unmatched',
-            txn.reference || null,
-            auto ? auto.coa_account_id : null,
-            auto ? auto.matched_type : null,
-            auto ? auto.matched_id : null,
-            auto ? true : false,
-          ]
-        );
+        const inserted = hasAutoMatched
+          ? await pool.query(
+              `INSERT INTO bank_transactions
+                 (bank_account_id, company_id, date, description, amount, type,
+                  status, reference, coa_account_id, matched_type, matched_id, auto_matched, created_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+               RETURNING id, amount, description, type`,
+              [
+                req.params.id, req.companyId, txn.date, txn.description,
+                txn.amount, txn.type,
+                auto ? auto.status : 'unmatched',
+                txn.reference || null,
+                auto ? auto.coa_account_id : null,
+                auto ? auto.matched_type : null,
+                auto ? auto.matched_id : null,
+                auto ? true : false,
+              ]
+            )
+          : await pool.query(
+              `INSERT INTO bank_transactions
+                 (bank_account_id, company_id, date, description, amount, type,
+                  status, reference, coa_account_id, matched_type, matched_id, created_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
+               RETURNING id, amount, description, type`,
+              [
+                req.params.id, req.companyId, txn.date, txn.description,
+                txn.amount, txn.type,
+                auto ? auto.status : 'unmatched',
+                txn.reference || null,
+                auto ? auto.coa_account_id : null,
+                auto ? auto.matched_type : null,
+                auto ? auto.matched_id : null,
+              ]
+            );
 
         // If auto-categorised to a CoA account, post the ledger entry so
         // reports and account balances stay in sync (same behaviour as manual
@@ -914,15 +949,30 @@ router.put('/transactions/:id', authMiddleware, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const result = await client.query(
-      `UPDATE bank_transactions
-       SET status=$1, matched_type=$2, matched_id=$3, category=$4, notes=$5,
-           coa_account_id=$6, receipt_file_id=COALESCE($7, receipt_file_id),
-           auto_matched=FALSE
-       WHERE id=$8 AND company_id=$9 RETURNING *`,
-      [status, matched_type || null, matched_id || null, category || null, notes || null,
-       coa_account_id || null, receipt_file_id || null, req.params.id, req.companyId]
-    );
+    // Try with auto_matched (new schema) first, and fall back to the old
+    // schema if the column doesn't exist yet.
+    let result;
+    try {
+      result = await client.query(
+        `UPDATE bank_transactions
+         SET status=$1, matched_type=$2, matched_id=$3, category=$4, notes=$5,
+             coa_account_id=$6, receipt_file_id=COALESCE($7, receipt_file_id),
+             auto_matched=FALSE
+         WHERE id=$8 AND company_id=$9 RETURNING *`,
+        [status, matched_type || null, matched_id || null, category || null, notes || null,
+         coa_account_id || null, receipt_file_id || null, req.params.id, req.companyId]
+      );
+    } catch (err) {
+      if (err.code !== '42703') throw err;
+      result = await client.query(
+        `UPDATE bank_transactions
+         SET status=$1, matched_type=$2, matched_id=$3, category=$4, notes=$5,
+             coa_account_id=$6, receipt_file_id=COALESCE($7, receipt_file_id)
+         WHERE id=$8 AND company_id=$9 RETURNING *`,
+        [status, matched_type || null, matched_id || null, category || null, notes || null,
+         coa_account_id || null, receipt_file_id || null, req.params.id, req.companyId]
+      );
+    }
     if (!result.rows.length) {
       await client.query('ROLLBACK');
       return res.status(404).json({
@@ -1162,14 +1212,25 @@ router.post('/accounts/:id/auto-categorise', authMiddleware, async (req, res) =>
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        await client.query(
-          `UPDATE bank_transactions
-           SET status=$1, matched_type=$2, matched_id=$3,
-               coa_account_id=$4, auto_matched=TRUE
-           WHERE id=$5 AND company_id=$6`,
-          [auto.status, auto.matched_type, auto.matched_id, auto.coa_account_id,
-           txn.id, req.companyId]
-        );
+        try {
+          await client.query(
+            `UPDATE bank_transactions
+             SET status=$1, matched_type=$2, matched_id=$3,
+                 coa_account_id=$4, auto_matched=TRUE
+             WHERE id=$5 AND company_id=$6`,
+            [auto.status, auto.matched_type, auto.matched_id, auto.coa_account_id,
+             txn.id, req.companyId]
+          );
+        } catch (colErr) {
+          if (colErr.code !== '42703') throw colErr;
+          await client.query(
+            `UPDATE bank_transactions
+             SET status=$1, matched_type=$2, matched_id=$3, coa_account_id=$4
+             WHERE id=$5 AND company_id=$6`,
+            [auto.status, auto.matched_type, auto.matched_id, auto.coa_account_id,
+             txn.id, req.companyId]
+          );
+        }
         // Keep the ledger in sync when auto-categorising to a CoA account
         if (auto.status === 'categorized' && auto.coa_account_id) {
           await postBankJournal(client, req.companyId, txn.id, [{

@@ -224,8 +224,20 @@ router.post('/accounts', auth, async (req, res) => {
   const opening = parseFloat(balance) || 0;
   const ident = identifier && String(identifier).trim() ? String(identifier).trim() : null;
 
+  // Detect once whether the identifier column exists in the current
+  // schema — the migration is idempotent and self-applies at boot, but
+  // if it hasn't run yet we degrade gracefully rather than 500'ing.
+  let hasIdentifierColumn = true;
+  try {
+    const check = await pool.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_name = 'chart_of_accounts' AND column_name = 'identifier' LIMIT 1`
+    );
+    hasIdentifierColumn = check.rows.length > 0;
+  } catch { /* fall through — assume column exists */ }
+
   // Enforce unique identifier per company (when provided).
-  if (ident) {
+  if (ident && hasIdentifierColumn) {
     const dup = await pool.query(
       `SELECT id FROM chart_of_accounts
        WHERE company_id = $1 AND LOWER(identifier) = LOWER($2)`,
@@ -252,11 +264,17 @@ router.post('/accounts', auth, async (req, res) => {
     // The opening balance is materialised as a posted journal entry against
     // Opening Balance Equity, so we insert with balance=0 and let the
     // journal-posting helper update both sides.
-    const result = await client.query(
-      `INSERT INTO chart_of_accounts (company_id, code, name, type, category, balance, identifier)
-       VALUES ($1,$2,$3,$4,$5,0,$6) RETURNING *`,
-      [req.companyId, code, name, type, category, ident]
-    );
+    const result = hasIdentifierColumn
+      ? await client.query(
+          `INSERT INTO chart_of_accounts (company_id, code, name, type, category, balance, identifier)
+           VALUES ($1,$2,$3,$4,$5,0,$6) RETURNING *`,
+          [req.companyId, code, name, type, category, ident]
+        )
+      : await client.query(
+          `INSERT INTO chart_of_accounts (company_id, code, name, type, category, balance)
+           VALUES ($1,$2,$3,$4,$5,0) RETURNING *`,
+          [req.companyId, code, name, type, category]
+        );
     const account = result.rows[0];
 
     if (opening !== 0) {
@@ -292,8 +310,17 @@ router.put('/accounts/:id', auth, async (req, res) => {
   const newOpening = parseFloat(balance) || 0;
   const ident = identifier && String(identifier).trim() ? String(identifier).trim() : null;
 
+  let hasIdentifierColumn = true;
+  try {
+    const check = await pool.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_name = 'chart_of_accounts' AND column_name = 'identifier' LIMIT 1`
+    );
+    hasIdentifierColumn = check.rows.length > 0;
+  } catch { /* fall through — assume column exists */ }
+
   // Enforce unique identifier per company.
-  if (ident) {
+  if (ident && hasIdentifierColumn) {
     const dup = await pool.query(
       `SELECT id FROM chart_of_accounts
        WHERE company_id = $1 AND LOWER(identifier) = LOWER($2) AND id <> $3`,
@@ -325,12 +352,19 @@ router.put('/accounts/:id', auth, async (req, res) => {
       });
     }
 
-    const result = await client.query(
-      `UPDATE chart_of_accounts
-       SET code=$1, name=$2, type=$3, category=$4, identifier=$5, updated_at=NOW()
-       WHERE id=$6 AND company_id=$7 RETURNING *`,
-      [code, name, type, category, ident, req.params.id, req.companyId]
-    );
+    const result = hasIdentifierColumn
+      ? await client.query(
+          `UPDATE chart_of_accounts
+           SET code=$1, name=$2, type=$3, category=$4, identifier=$5, updated_at=NOW()
+           WHERE id=$6 AND company_id=$7 RETURNING *`,
+          [code, name, type, category, ident, req.params.id, req.companyId]
+        )
+      : await client.query(
+          `UPDATE chart_of_accounts
+           SET code=$1, name=$2, type=$3, category=$4, updated_at=NOW()
+           WHERE id=$5 AND company_id=$6 RETURNING *`,
+          [code, name, type, category, req.params.id, req.companyId]
+        );
     const account = result.rows[0];
 
     // Re-post the opening-balance journal at the new amount. The helper
