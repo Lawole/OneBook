@@ -2,12 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Plus, Trash2, Edit2, X, BookOpen, PenLine, BarChart2, RefreshCw, Layers, CheckCircle,
+  TrendingUp, AlertTriangle,
 } from 'lucide-react';
 import Header from '../components/Header';
-import { accountAPI, journalAPI, budgetAPI, fxAPI, bulkAPI } from '../services/api';
+import { accountAPI, journalAPI, budgetAPI, fxAPI, fxRatesAPI, bulkAPI } from '../services/api';
 import useCurrency from '../hooks/useCurrency';
 import { WORLD_CURRENCIES } from '../utils/currencies';
 import { mockCategories } from '../utils/mockData';
+import CurrencyPicker from '../components/CurrencyPicker';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared helpers
@@ -828,6 +830,263 @@ const CurrencyAdjustmentTab = ({ fmt }) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// FX Rates Tab  (daily exchange rates → base currency)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const blankRate = () => ({
+  rate_date: new Date().toISOString().split('T')[0],
+  currency_code: 'NGN',
+  rate: '',
+  notes: '',
+});
+
+const FxRatesTab = () => {
+  const { currency: baseCurrency } = useCurrency();
+  const [rates, setRates] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [modal, setModal] = useState(null); // null | 'create' | 'edit'
+  const [form, setForm] = useState(blankRate());
+  const [editId, setEditId] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [filterCurrency, setFilterCurrency] = useState('');
+
+  const fetchRates = () => {
+    setLoading(true);
+    fxRatesAPI.getAll()
+      .then((res) => setRates(res.data.rates || []))
+      .catch(() => setRates([]))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { fetchRates(); }, []);
+
+  const openCreate = () => {
+    setForm(blankRate());
+    setEditId(null);
+    setError('');
+    setModal('create');
+  };
+  const openEdit = (r) => {
+    setForm({
+      rate_date: r.rate_date?.slice(0, 10) || new Date().toISOString().split('T')[0],
+      currency_code: r.currency_code,
+      rate: String(r.rate),
+      notes: r.notes || '',
+    });
+    setEditId(r.id);
+    setError('');
+    setModal('edit');
+  };
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    setSaving(true); setError('');
+    try {
+      if (editId) await fxRatesAPI.update(editId, form);
+      else        await fxRatesAPI.create(form);
+      await fetchRates();
+      setModal(null);
+    } catch (err) {
+      const data = err.response?.data;
+      const msg = data?.message || 'Could not save the rate';
+      const remedy = data?.remedy ? ` ${data.remedy}` : '';
+      setError(msg + remedy);
+    } finally { setSaving(false); }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('Delete this exchange rate?')) return;
+    try {
+      await fxRatesAPI.delete(id);
+      fetchRates();
+    } catch (err) { console.error(err); }
+  };
+
+  const filtered = filterCurrency
+    ? rates.filter((r) => r.currency_code === filterCurrency)
+    : rates;
+
+  const uniqueCurrencies = Array.from(new Set(rates.map((r) => r.currency_code))).sort();
+
+  const fmtRateDate = (d) => {
+    if (!d) return '—';
+    return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  };
+  const flagFor = (code) => WORLD_CURRENCIES.find((c) => c.code === code)?.flag || '🌐';
+  const nameFor = (code) => WORLD_CURRENCIES.find((c) => c.code === code)?.label || code;
+
+  return (
+    <div>
+      <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 12, padding: '14px 18px', marginBottom: 20, display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+        <TrendingUp size={18} style={{ color: '#2563eb', marginTop: 2, flexShrink: 0 }} />
+        <div style={{ fontSize: 13, color: '#1e40af', lineHeight: 1.55 }}>
+          <strong>Daily exchange rates to {baseCurrency}.</strong> Enter the value of 1 unit of the source currency in {baseCurrency}.
+          These rates are used at report time to convert foreign-currency bank transactions (Profit &amp; Loss, Balance Sheet, Cash Flow, Sales report, etc.) into {baseCurrency}.
+          If no rate exists for a specific date, reports use the most recent rate on or before that date.
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+        <select
+          className="form-control"
+          value={filterCurrency}
+          onChange={(e) => setFilterCurrency(e.target.value)}
+          style={{ width: 220 }}
+        >
+          <option value="">All currencies</option>
+          {uniqueCurrencies.map((c) => (
+            <option key={c} value={c}>{flagFor(c)} {c} — {nameFor(c)}</option>
+          ))}
+        </select>
+        <div style={{ marginLeft: 'auto' }}>
+          <button className="btn btn-primary" onClick={openCreate}>
+            <Plus size={18} /> New Rate
+          </button>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-body">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Currency</th>
+                <th className="text-right">Rate to {baseCurrency}</th>
+                <th className="text-right">1 {baseCurrency} =</th>
+                <th>Notes</th>
+                <th className="text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={6} className="text-center text-muted">Loading…</td></tr>
+              ) : filtered.length === 0 ? (
+                <tr><td colSpan={6} className="text-center text-muted">
+                  No exchange rates set yet.
+                  <br />
+                  <span style={{ fontSize: 12 }}>Add one so foreign-currency transactions convert correctly in reports.</span>
+                </td></tr>
+              ) : filtered.map((r) => {
+                const inverse = r.rate > 0 ? (1 / r.rate) : 0;
+                return (
+                  <tr key={r.id}>
+                    <td style={{ whiteSpace: 'nowrap', color: '#64748b' }}>{fmtRateDate(r.rate_date)}</td>
+                    <td>
+                      <span style={{ fontSize: 16, marginRight: 6 }}>{flagFor(r.currency_code)}</span>
+                      <strong>{r.currency_code}</strong>
+                      <span style={{ color: '#94a3b8', fontSize: 12, marginLeft: 8 }}>{nameFor(r.currency_code)}</span>
+                    </td>
+                    <td className="text-right" style={{ fontFamily: 'monospace', color: '#0f172a', fontWeight: 600 }}>
+                      1 {r.currency_code} = {Number(r.rate).toLocaleString(undefined, { maximumFractionDigits: 8 })} {baseCurrency}
+                    </td>
+                    <td className="text-right" style={{ fontFamily: 'monospace', color: '#64748b', fontSize: 13 }}>
+                      {inverse ? `${inverse.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${r.currency_code}` : '—'}
+                    </td>
+                    <td style={{ fontSize: 13, color: '#64748b', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {r.notes || ''}
+                    </td>
+                    <td className="text-right">
+                      <button className="btn-icon" onClick={() => openEdit(r)} title="Edit"><Edit2 size={16} /></button>
+                      <button className="btn-icon text-danger" onClick={() => handleDelete(r.id)} title="Delete"><Trash2 size={16} /></button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {modal && (
+        <div style={overlayStyle}>
+          <div style={{ ...modalStyle, maxWidth: 520 }}>
+            <div style={modalHeader}>
+              <div>
+                <h3 style={{ margin: 0 }}>{editId ? 'Edit FX Rate' : 'New FX Rate'}</h3>
+                <div style={{ fontSize: 13, color: '#64748b', marginTop: 4 }}>
+                  Enter 1 {form.currency_code || 'unit'} = ? {baseCurrency}
+                </div>
+              </div>
+              <button onClick={() => setModal(null)} style={closeBtn}><X size={20} /></button>
+            </div>
+
+            <form onSubmit={handleSave}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className="form-group">
+                  <label>Date *</label>
+                  <input
+                    className="form-control"
+                    type="date"
+                    required
+                    value={form.rate_date}
+                    onChange={(e) => setForm({ ...form, rate_date: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Source Currency *</label>
+                  <CurrencyPicker
+                    value={form.currency_code}
+                    onChange={(code) => setForm({ ...form, currency_code: code })}
+                    size="md"
+                  />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Rate (1 {form.currency_code || '?'} = ? {baseCurrency}) *</label>
+                <input
+                  className="form-control"
+                  type="number"
+                  step="0.00000001"
+                  min="0"
+                  required
+                  value={form.rate}
+                  onChange={(e) => setForm({ ...form, rate: e.target.value })}
+                  placeholder="e.g. 0.00062"
+                />
+                {parseFloat(form.rate) > 0 && (
+                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 6, fontFamily: 'monospace' }}>
+                    1 {form.currency_code} = {parseFloat(form.rate).toLocaleString(undefined, { maximumFractionDigits: 8 })} {baseCurrency}
+                    <br />
+                    1 {baseCurrency} = {(1 / parseFloat(form.rate)).toLocaleString(undefined, { maximumFractionDigits: 4 })} {form.currency_code}
+                  </div>
+                )}
+              </div>
+
+              <div className="form-group">
+                <label>Notes (optional)</label>
+                <input
+                  className="form-control"
+                  value={form.notes}
+                  onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                  placeholder="e.g. CBN official rate, mid-market, source: xe.com…"
+                />
+              </div>
+
+              {error && (
+                <div style={{ background: '#fee2e2', color: '#991b1b', padding: '10px 14px', borderRadius: 8, marginBottom: 12, fontSize: 13, display: 'flex', gap: 8 }}>
+                  <AlertTriangle size={15} style={{ marginTop: 2, flexShrink: 0 }} />
+                  <div>{error}</div>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                <button type="button" className="btn btn-outline" onClick={() => setModal(null)}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={saving}>
+                  {saving ? 'Saving…' : (editId ? 'Save changes' : 'Add rate')}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Bulk Update Tab
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1007,6 +1266,7 @@ const TABS = [
   { slug: 'chart-of-accounts', label: 'Chart of Accounts', icon: BookOpen  },
   { slug: 'journals',          label: 'Manual Journals',   icon: PenLine   },
   { slug: 'budgets',           label: 'Budgets',           icon: BarChart2 },
+  { slug: 'fx-rates',          label: 'FX Rates',          icon: TrendingUp },
   { slug: 'currency',          label: 'Currency Adjustment', icon: RefreshCw },
   { slug: 'bulk-update',       label: 'Bulk Update',       icon: Layers    },
 ];
@@ -1014,6 +1274,7 @@ const TABS = [
 const getActiveSlug = (pathname) => {
   if (pathname.includes('journals'))    return 'journals';
   if (pathname.includes('budgets'))     return 'budgets';
+  if (pathname.includes('fx-rates'))    return 'fx-rates';
   if (pathname.includes('currency'))    return 'currency';
   if (pathname.includes('bulk-update')) return 'bulk-update';
   return 'chart-of-accounts';
@@ -1029,6 +1290,7 @@ const Accountant = () => {
     'chart-of-accounts': 'Manage your full chart of accounts',
     'journals':          'Create and post double-entry journal entries',
     'budgets':           'Set and track budgets by fiscal year',
+    'fx-rates':          'Set daily exchange rates used in every report',
     'currency':          'Record foreign exchange revaluations',
     'bulk-update':       'Apply bulk changes to invoices or expenses',
   };
@@ -1062,6 +1324,7 @@ const Accountant = () => {
         {activeSlug === 'chart-of-accounts' && <ChartOfAccountsTab fmt={fmt} />}
         {activeSlug === 'journals'          && <ManualJournalsTab fmt={fmt} />}
         {activeSlug === 'budgets'           && <BudgetsTab fmt={fmt} />}
+        {activeSlug === 'fx-rates'          && <FxRatesTab />}
         {activeSlug === 'currency'          && <CurrencyAdjustmentTab fmt={fmt} />}
         {activeSlug === 'bulk-update'       && <BulkUpdateTab fmt={fmt} />}
 

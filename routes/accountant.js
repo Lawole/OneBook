@@ -803,4 +803,155 @@ router.post('/bulk-apply', auth, async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// FX RATES  (daily exchange rates → base currency)
+// ═══════════════════════════════════════════════════════════════
+//
+// One row = 1 unit of `currency_code` on `rate_date` converts to
+// `rate` units of the company's base currency. Every report converts
+// foreign-currency amounts using the nearest previous rate for that
+// currency (see getFxRateOnOrBefore).
+
+// GET /api/accountant/fx-rates?currency_code=&from=&to=
+router.get('/fx-rates', auth, async (req, res) => {
+  const { currency_code, from, to } = req.query;
+  const params = [req.companyId];
+  const where = ['company_id = $1'];
+  if (currency_code) { params.push(currency_code); where.push(`currency_code = $${params.length}`); }
+  if (from)          { params.push(from);          where.push(`rate_date >= $${params.length}`); }
+  if (to)            { params.push(to);            where.push(`rate_date <= $${params.length}`); }
+
+  try {
+    const result = await pool.query(
+      `SELECT id, rate_date, currency_code, rate, notes, created_at, updated_at
+       FROM fx_rates WHERE ${where.join(' AND ')}
+       ORDER BY rate_date DESC, currency_code ASC`,
+      params
+    );
+    res.json({
+      rates: result.rows.map((r) => ({
+        ...r,
+        rate: parseFloat(r.rate),
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({
+      message: 'Could not load FX rates',
+      reason: err.message,
+      remedy: 'Refresh the page. If it persists, contact support.',
+    });
+  }
+});
+
+// POST /api/accountant/fx-rates
+router.post('/fx-rates', auth, async (req, res) => {
+  const { rate_date, currency_code, rate, notes } = req.body;
+
+  if (!rate_date || !currency_code || rate === undefined || rate === null || rate === '') {
+    return res.status(400).json({
+      message: 'Date, currency and rate are all required',
+      reason: 'One or more required fields was missing',
+      remedy: 'Fill in the rate date, source currency and the rate to base currency, then save again.',
+    });
+  }
+
+  const rateNum = parseFloat(rate);
+  if (isNaN(rateNum) || rateNum <= 0) {
+    return res.status(400).json({
+      message: 'Rate must be a positive number',
+      reason: `"${rate}" is not a valid rate`,
+      remedy: 'Enter the value of 1 unit of the source currency in your base currency (e.g. 0.00062 for 1 NGN → USD).',
+    });
+  }
+
+  try {
+    // Prevent same currency as the base currency (rate is always 1)
+    const comp = await pool.query('SELECT base_currency FROM companies WHERE id = $1', [req.companyId]);
+    const base = comp.rows[0]?.base_currency;
+    if (base && String(currency_code).toUpperCase() === String(base).toUpperCase()) {
+      return res.status(400).json({
+        message: 'No need to set a rate for your base currency',
+        reason: `${base} is your OneBooks base currency — it is always 1:1 with itself`,
+        remedy: 'Pick a different source currency (e.g. NGN, EUR, GBP).',
+      });
+    }
+
+    // Upsert: replace if the same (date, currency) already exists
+    const result = await pool.query(
+      `INSERT INTO fx_rates (company_id, rate_date, currency_code, rate, notes, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+       ON CONFLICT (company_id, rate_date, currency_code)
+       DO UPDATE SET rate = EXCLUDED.rate, notes = EXCLUDED.notes, updated_at = NOW()
+       RETURNING id, rate_date, currency_code, rate, notes`,
+      [req.companyId, rate_date, currency_code, rateNum, notes || null]
+    );
+    res.status(201).json({
+      rate: { ...result.rows[0], rate: parseFloat(result.rows[0].rate) },
+    });
+  } catch (err) {
+    res.status(500).json({
+      message: 'Could not save the FX rate',
+      reason: err.message,
+      remedy: 'Check the values and try again.',
+    });
+  }
+});
+
+// PUT /api/accountant/fx-rates/:id
+router.put('/fx-rates/:id', auth, async (req, res) => {
+  const { rate_date, currency_code, rate, notes } = req.body;
+  const rateNum = parseFloat(rate);
+  if (isNaN(rateNum) || rateNum <= 0) {
+    return res.status(400).json({
+      message: 'Rate must be a positive number',
+      reason: `"${rate}" is not a valid rate`,
+      remedy: 'Enter a positive numeric value (e.g. 0.00062).',
+    });
+  }
+  try {
+    const result = await pool.query(
+      `UPDATE fx_rates
+       SET rate_date=$1, currency_code=$2, rate=$3, notes=$4, updated_at=NOW()
+       WHERE id=$5 AND company_id=$6
+       RETURNING id, rate_date, currency_code, rate, notes`,
+      [rate_date, currency_code, rateNum, notes || null, req.params.id, req.companyId]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({
+        message: 'Rate not found',
+        reason: `No FX rate with id ${req.params.id} belongs to this company`,
+        remedy: 'Refresh the page to reload the rates list.',
+      });
+    }
+    res.json({ rate: { ...result.rows[0], rate: parseFloat(result.rows[0].rate) } });
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(400).json({
+        message: 'A rate already exists for that date and currency',
+        reason: 'Only one rate can be set per (date, currency) pair',
+        remedy: 'Edit the existing row instead of creating a duplicate.',
+      });
+    }
+    res.status(500).json({
+      message: 'Could not update the FX rate',
+      reason: err.message,
+      remedy: 'Check the values and try again.',
+    });
+  }
+});
+
+// DELETE /api/accountant/fx-rates/:id
+router.delete('/fx-rates/:id', auth, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM fx_rates WHERE id=$1 AND company_id=$2', [req.params.id, req.companyId]);
+    res.json({ message: 'FX rate deleted' });
+  } catch (err) {
+    res.status(500).json({
+      message: 'Could not delete the FX rate',
+      reason: err.message,
+      remedy: 'Refresh the page and try again.',
+    });
+  }
+});
+
 module.exports = router;

@@ -179,6 +179,18 @@ export const fxAPI = {
   delete: (id) => api.delete(`/accountant/fx-adjustments/${id}`),
 };
 
+// Daily exchange rates → base currency (used by every report to
+// convert foreign-currency bank transactions).
+export const fxRatesAPI = {
+  getAll: (params) => {
+    if (isDemoMode()) return Promise.reject(new Error('Demo mode'));
+    return api.get('/accountant/fx-rates', { params });
+  },
+  create: (data) => api.post('/accountant/fx-rates', data),
+  update: (id, data) => api.put(`/accountant/fx-rates/${id}`, data),
+  delete: (id) => api.delete(`/accountant/fx-rates/${id}`),
+};
+
 export const bulkAPI = {
   getRecords: (type, params) => {
     if (isDemoMode()) return Promise.reject(new Error('Demo mode'));

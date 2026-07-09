@@ -816,6 +816,19 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
   );
 };
 
+// Format an amount in a specific currency (independent of the OneBook
+// base currency). Used everywhere bank transactions / balances are shown
+// so a NGN account renders ₦ even when the base currency is USD.
+const formatIn = (amount, currency) => {
+  const code = currency || 'USD';
+  const abs = Math.abs(parseFloat(amount) || 0);
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: code }).format(abs);
+  } catch {
+    return `${code} ${abs.toFixed(2)}`;
+  }
+};
+
 // ── Main Banking Page ──────────────────────────────────────────
 const Banking = () => {
   const { fmt: fmtRaw, currency: baseCurrency } = useCurrency();
@@ -958,14 +971,18 @@ const Banking = () => {
             />
             <MetricCard
               icon={ArrowUpRight}
-              label="Money in (selected account)"
-              value={stats ? fmt(stats.total_credits || 0) : '—'}
+              label={`Money in${selectedAccount ? ` · ${selectedAccount.currency_code}` : ''}`}
+              value={stats && selectedAccount
+                ? formatIn(stats.total_credits || 0, selectedAccount.currency_code)
+                : '—'}
               tone="positive"
             />
             <MetricCard
               icon={ArrowDownRight}
-              label="Money out (selected account)"
-              value={stats ? fmt(stats.total_debits || 0) : '—'}
+              label={`Money out${selectedAccount ? ` · ${selectedAccount.currency_code}` : ''}`}
+              value={stats && selectedAccount
+                ? formatIn(stats.total_debits || 0, selectedAccount.currency_code)
+                : '—'}
               tone="negative"
             />
             <MetricCard
@@ -1204,10 +1221,14 @@ const Banking = () => {
                               {txn.notes            && <div style={{ fontSize: 12, color: '#94a3b8', fontStyle: 'italic' }}>{txn.notes}</div>}
                             </td>
                             <td className="text-right" style={{ fontWeight: 700, whiteSpace: 'nowrap', color: '#0d9488', fontSize: 14 }}>
-                              {txn.type === 'credit' ? fmt(txn.amount) : ''}
+                              {txn.type === 'credit'
+                                ? formatIn(txn.amount, txn.currency_code || selectedAccount?.currency_code)
+                                : ''}
                             </td>
                             <td className="text-right" style={{ fontWeight: 700, whiteSpace: 'nowrap', color: '#dc2626', fontSize: 14 }}>
-                              {txn.type === 'debit' ? fmt(txn.amount) : ''}
+                              {txn.type === 'debit'
+                                ? formatIn(txn.amount, txn.currency_code || selectedAccount?.currency_code)
+                                : ''}
                             </td>
                             <td><StatusBadge status={txn.status} /></td>
                             <td className="text-right" style={{ whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
@@ -1259,7 +1280,7 @@ const Banking = () => {
               coaAccounts={coaAccounts}
               onClose={() => setActiveTxn(null)}
               onSaved={() => { setActiveTxn(null); fetchTransactions(); fetchAccounts(); }}
-              fmt={fmt}
+              fmt={(n) => formatIn(n, activeTxn.currency_code || selectedAccount?.currency_code)}
             />
           )}
         </div>
