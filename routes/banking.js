@@ -489,6 +489,108 @@ function extractInvoiceNumbers(text) {
   return Array.from(found);
 }
 
+// ── Intra-company transfer detection ─────────────────────
+// A withdrawal (debit) in one bank account whose amount matches a deposit
+// (credit) in a *different* account of the same company — same currency,
+// within a few days — is almost certainly an internal transfer.
+//
+// Auto-link rule (deliberately strict so a wrong pair is never linked):
+//   • exactly ONE unmatched opposite-side candidate in the date window
+//   • identical amount and identical account currency
+//   • AND (same date OR either description mentions a transfer keyword)
+// Anything weaker is only *suggested* in the Match panel, never auto-linked.
+
+const TRANSFER_DATE_WINDOW_DAYS = 3;
+const TRANSFER_KEYWORD_RE =
+  /(transfer|trf|trsf|tfr|xfer|internal|intra|sweep|own\s+acc(oun)?t|between\s+accounts|to\s+own)/i;
+
+const isoDate = (d) => {
+  if (!d) return '';
+  if (d instanceof Date) {
+    // pg returns DATE columns as a JS Date at *local* midnight, so build the
+    // string from local parts — toISOString() would shift it a day in UTC+ zones.
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+  return String(d).split('T')[0];
+};
+
+async function findTransferCandidates(db, companyId, bankAccountId, txn, limit = 5) {
+  const oppositeType = txn.type === 'debit' ? 'credit' : 'debit';
+  const res = await db.query(
+    `SELECT bt.id, bt.bank_account_id, bt.date, bt.description, bt.amount,
+            bt.type, bt.reference, ba.name AS account_name, ba.currency_code
+     FROM bank_transactions bt
+     JOIN bank_accounts ba ON ba.id = bt.bank_account_id
+     WHERE bt.company_id = $1
+       AND bt.bank_account_id <> $2
+       AND bt.type = $3
+       AND bt.amount = $4
+       AND bt.status = 'unmatched'
+       AND bt.date BETWEEN $5::date - $6::int AND $5::date + $6::int
+       AND ba.currency_code = (SELECT currency_code FROM bank_accounts WHERE id = $2)
+     ORDER BY ABS(bt.date - $5::date) ASC, bt.id ASC
+     LIMIT $7`,
+    [companyId, bankAccountId, oppositeType, txn.amount, txn.date,
+     TRANSFER_DATE_WINDOW_DAYS, limit]
+  );
+  return res.rows;
+}
+
+function isConfidentTransferMatch(txn, candidates) {
+  if (candidates.length !== 1) return false;
+  const cand = candidates[0];
+  const sameDate = isoDate(cand.date) === isoDate(txn.date);
+  const keywordHit = TRANSFER_KEYWORD_RE.test(String(txn.description || ''))
+                  || TRANSFER_KEYWORD_RE.test(String(cand.description || ''));
+  return sameDate || keywordHit;
+}
+
+// Link two transactions as the two legs of one internal transfer.
+// No journal is posted — moving money between two own bank accounts is
+// neither income nor expense — and any journal previously posted for
+// either leg is removed so reports stay correct.
+async function linkTransferPair(client, companyId, txnIdA, txnIdB, autoMatched) {
+  await deleteBankJournal(client, companyId, txnIdA);
+  await deleteBankJournal(client, companyId, txnIdB);
+
+  const setLeg = async (id, counterpartId) => {
+    try {
+      await client.query(
+        `UPDATE bank_transactions
+         SET status='matched', matched_type='transfer', matched_id=$1,
+             coa_account_id=NULL, auto_matched=$2
+         WHERE id=$3 AND company_id=$4`,
+        [counterpartId, !!autoMatched, id, companyId]
+      );
+    } catch (err) {
+      if (err.code !== '42703') throw err; // older schema without auto_matched
+      await client.query(
+        `UPDATE bank_transactions
+         SET status='matched', matched_type='transfer', matched_id=$1, coa_account_id=NULL
+         WHERE id=$2 AND company_id=$3`,
+        [counterpartId, id, companyId]
+      );
+    }
+  };
+  await setLeg(txnIdA, txnIdB);
+  await setLeg(txnIdB, txnIdA);
+}
+
+// If a transaction is one leg of a transfer, detach the other leg (reset it
+// to unmatched) so a half-linked pair is never left behind.
+async function unlinkTransferCounterpart(client, companyId, txn) {
+  if (!txn || txn.matched_type !== 'transfer' || !txn.matched_id) return;
+  await client.query(
+    `UPDATE bank_transactions
+     SET status='unmatched', matched_type=NULL, matched_id=NULL
+     WHERE id=$1 AND company_id=$2 AND matched_type='transfer' AND matched_id=$3`,
+    [txn.matched_id, companyId, txn.id]
+  );
+}
+
 // ── Auto-categorise a single transaction ─────────────────
 // Returns { status, matched_type, matched_id, coa_account_id, auto_matched }
 //         or null if no auto-decision could be made.
@@ -665,15 +767,31 @@ router.put('/accounts/:id', authMiddleware, async (req, res) => {
 
 // DELETE /banking/accounts/:id
 router.delete('/accounts/:id', authMiddleware, async (req, res) => {
+  const client = await pool.connect();
   try {
-    await pool.query('DELETE FROM bank_accounts WHERE id=$1 AND company_id=$2', [req.params.id, req.companyId]);
+    await client.query('BEGIN');
+    // Transactions in this account are removed by cascade; release any
+    // transfer legs in OTHER accounts that pointed at them so no dangling
+    // matched_id is left behind.
+    await client.query(
+      `UPDATE bank_transactions
+       SET status='unmatched', matched_type=NULL, matched_id=NULL
+       WHERE company_id=$1 AND matched_type='transfer'
+         AND matched_id IN (SELECT id FROM bank_transactions WHERE bank_account_id=$2)`,
+      [req.companyId, req.params.id]
+    );
+    await client.query('DELETE FROM bank_accounts WHERE id=$1 AND company_id=$2', [req.params.id, req.companyId]);
+    await client.query('COMMIT');
     res.json({ message: 'Account deleted' });
   } catch (err) {
+    await client.query('ROLLBACK');
     res.status(500).json({
       message: 'Could not delete account',
       reason: err.message,
       remedy: 'The account may have linked transactions. Remove them first, then retry.',
     });
+  } finally {
+    client.release();
   }
 });
 
@@ -761,6 +879,7 @@ router.post('/accounts/:id/import', authMiddleware, upload.single('statement'), 
     let skipped = 0;
     let autoCategorised = 0;
     let autoMatched = 0;
+    let autoTransferred = 0;
     const rowErrors = [];
 
     // Detect whether the auto_matched column exists (older schema tolerance)
@@ -782,8 +901,20 @@ router.post('/accounts/:id/import', authMiddleware, upload.single('statement'), 
         );
         if (dup.rows.length > 0) { skipped++; continue; }
 
-        // Try to auto-categorise / auto-match
-        const auto = await autoCategoriseTransaction(txn, req.companyId);
+        // ── Intra-company transfer detection (runs FIRST so a transfer leg
+        // is never mis-matched to an invoice/expense with the same amount)
+        let transferCounterpartId = null;
+        try {
+          const cands = await findTransferCandidates(pool, req.companyId, req.params.id, txn);
+          if (isConfidentTransferMatch(txn, cands)) transferCounterpartId = cands[0].id;
+        } catch (tErr) {
+          console.error('Transfer detection failed during import:', tErr.message);
+        }
+
+        // Try to auto-categorise / auto-match (skipped when it's a transfer)
+        const auto = transferCounterpartId
+          ? null
+          : await autoCategoriseTransaction(txn, req.companyId);
 
         const inserted = hasAutoMatched
           ? await pool.query(
@@ -819,6 +950,34 @@ router.post('/accounts/:id/import', authMiddleware, upload.single('statement'), 
                 auto ? auto.matched_id : null,
               ]
             );
+
+        // Link the two legs of a detected intra-company transfer. The
+        // counterpart is re-checked (and row-locked) inside the transaction
+        // so a counterpart consumed by an earlier row is never double-linked.
+        if (transferCounterpartId) {
+          const linkClient = await pool.connect();
+          try {
+            await linkClient.query('BEGIN');
+            const still = await linkClient.query(
+              `SELECT id FROM bank_transactions
+               WHERE id=$1 AND company_id=$2 AND status='unmatched' FOR UPDATE`,
+              [transferCounterpartId, req.companyId]
+            );
+            if (still.rows.length) {
+              await linkTransferPair(linkClient, req.companyId,
+                inserted.rows[0].id, transferCounterpartId, true);
+              autoTransferred++;
+            }
+            await linkClient.query('COMMIT');
+          } catch (linkErr) {
+            await linkClient.query('ROLLBACK');
+            // A failed link never fails the import — the row simply stays
+            // unmatched and shows up as a transfer suggestion instead.
+            console.error('Transfer auto-link failed for txn', inserted.rows[0].id, linkErr.message);
+          } finally {
+            linkClient.release();
+          }
+        }
 
         // If auto-categorised to a CoA account, post the ledger entry so
         // reports and account balances stay in sync (same behaviour as manual
@@ -860,6 +1019,7 @@ router.post('/accounts/:id/import', authMiddleware, upload.single('statement'), 
     if (skipped > 0)         parts.push(`${skipped} duplicate${skipped === 1 ? '' : 's'} skipped`);
     if (autoMatched > 0)     parts.push(`${autoMatched} auto-matched to invoices/expenses`);
     if (autoCategorised > 0) parts.push(`${autoCategorised} auto-categorised`);
+    if (autoTransferred > 0) parts.push(`${autoTransferred} linked as intra-company transfer${autoTransferred === 1 ? '' : 's'}`);
     const rowsWithIssues = errors.length + rowErrors.length;
     if (rowsWithIssues > 0)  parts.push(`${rowsWithIssues} row${rowsWithIssues === 1 ? '' : 's'} could not be imported`);
 
@@ -869,6 +1029,7 @@ router.post('/accounts/:id/import', authMiddleware, upload.single('statement'), 
       skipped,
       auto_matched: autoMatched,
       auto_categorised: autoCategorised,
+      auto_transferred: autoTransferred,
       row_errors: [...errors, ...rowErrors].slice(0, 20),
       rows_examined: rawRowCount,
     });
@@ -904,11 +1065,14 @@ router.get('/transactions', authMiddleware, async (req, res) => {
       `SELECT bt.*, ba.name as account_name, ba.currency_code,
               coa.name as coa_account_name, coa.code as coa_account_code,
               rf.name as receipt_file_name, rf.url as receipt_file_url,
-              rf.reference as receipt_reference, rf.mime_type as receipt_mime_type
+              rf.reference as receipt_reference, rf.mime_type as receipt_mime_type,
+              tba.name as transfer_account_name, tct.date as transfer_date
        FROM bank_transactions bt
        LEFT JOIN bank_accounts ba ON bt.bank_account_id = ba.id
        LEFT JOIN chart_of_accounts coa ON bt.coa_account_id = coa.id
        LEFT JOIN files rf ON bt.receipt_file_id = rf.id
+       LEFT JOIN bank_transactions tct ON bt.matched_type = 'transfer' AND tct.id = bt.matched_id
+       LEFT JOIN bank_accounts tba ON tct.bank_account_id = tba.id
        ${where}
        ORDER BY bt.date DESC, bt.id DESC
        LIMIT $${idx} OFFSET $${idx + 1}`,
@@ -949,6 +1113,17 @@ router.put('/transactions/:id', authMiddleware, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    // Snapshot the row first: if it is currently one leg of an intra-company
+    // transfer and this update breaks that link, the other leg must be
+    // released back to 'unmatched' as well.
+    const beforeRes = await client.query(
+      `SELECT id, matched_type, matched_id FROM bank_transactions
+       WHERE id=$1 AND company_id=$2 FOR UPDATE`,
+      [req.params.id, req.companyId]
+    );
+    const before = beforeRes.rows[0] || null;
+
     // Try with auto_matched (new schema) first, and fall back to the old
     // schema if the column doesn't exist yet.
     let result;
@@ -983,6 +1158,12 @@ router.put('/transactions/:id', authMiddleware, async (req, res) => {
     }
     const txn = result.rows[0];
 
+    // Release the counterpart if this update broke an existing transfer link.
+    if (before && before.matched_type === 'transfer' && before.matched_id &&
+        !(matched_type === 'transfer' && parseInt(matched_id, 10) === parseInt(before.matched_id, 10))) {
+      await unlinkTransferCounterpart(client, req.companyId, before);
+    }
+
     // Sync the ledger: post a journal when categorised, remove it otherwise.
     if (status === 'categorized' && coa_account_id) {
       await postBankJournal(client, req.companyId, txn.id, [
@@ -1011,6 +1192,15 @@ router.delete('/transactions/:id', authMiddleware, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    // If this row is one leg of a transfer, release the other leg first.
+    const rowRes = await client.query(
+      `SELECT id, matched_type, matched_id FROM bank_transactions
+       WHERE id=$1 AND company_id=$2 FOR UPDATE`,
+      [req.params.id, req.companyId]
+    );
+    if (rowRes.rows.length) {
+      await unlinkTransferCounterpart(client, req.companyId, rowRes.rows[0]);
+    }
     await deleteBankJournal(client, req.companyId, req.params.id);
     await client.query('DELETE FROM bank_transactions WHERE id=$1 AND company_id=$2', [req.params.id, req.companyId]);
     await client.query('COMMIT');
@@ -1169,13 +1359,139 @@ router.get('/match-suggestions/:id', authMiddleware, async (req, res) => {
       suggestions = expenses.rows;
     }
 
-    res.json({ transaction: txn, suggestions });
+    // Intra-company transfer candidates: opposite-side transactions of the
+    // same amount & currency in another account of this company.
+    let transferSuggestions = [];
+    try {
+      const cands = await findTransferCandidates(pool, req.companyId, txn.bank_account_id, txn);
+      transferSuggestions = cands.map((c) => ({
+        id: c.id,
+        match_type: 'transfer',
+        reference: c.reference || '',
+        party: c.account_name,
+        amount: c.amount,
+        date: c.date,
+        description: c.description,
+        same_date: isoDate(c.date) === isoDate(txn.date),
+      }));
+    } catch (tErr) {
+      console.error('Transfer suggestion lookup failed:', tErr.message);
+    }
+
+    res.json({ transaction: txn, suggestions, transfer_suggestions: transferSuggestions });
   } catch (err) {
     res.status(500).json({
       message: 'Could not load suggestions',
       reason: err.message,
       remedy: 'Try again in a moment.',
     });
+  }
+});
+
+// ═══════════════════════════════════════════════════════
+// Intra-company transfer linking
+// ═══════════════════════════════════════════════════════
+
+// POST /banking/transactions/:id/transfer  { counterpart_id }
+// Links two transactions (money out of one account, into another account of
+// the same company) as the two legs of one internal transfer.
+router.post('/transactions/:id/transfer', authMiddleware, async (req, res) => {
+  const txnId = parseInt(req.params.id, 10);
+  const counterpartId = parseInt(req.body.counterpart_id, 10);
+
+  if (!counterpartId || !txnId) {
+    return res.status(400).json({
+      message: 'Counterpart transaction is required',
+      reason: 'The "counterpart_id" field was missing or invalid',
+      remedy: 'Pick a transaction from the transfer suggestions and try again.',
+    });
+  }
+  if (counterpartId === txnId) {
+    return res.status(400).json({
+      message: 'A transaction cannot be transferred to itself',
+      reason: 'Both sides of the transfer are the same transaction',
+      remedy: 'Pick the matching transaction from the other bank account.',
+    });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const rowsRes = await client.query(
+      `SELECT bt.*, ba.currency_code, ba.name AS account_name
+       FROM bank_transactions bt
+       JOIN bank_accounts ba ON ba.id = bt.bank_account_id
+       WHERE bt.id = ANY($1::int[]) AND bt.company_id = $2
+       FOR UPDATE OF bt`,
+      [[txnId, counterpartId], req.companyId]
+    );
+    const a = rowsRes.rows.find((r) => r.id === txnId);
+    const b = rowsRes.rows.find((r) => r.id === counterpartId);
+
+    if (!a || !b) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({
+        message: 'Transaction not found',
+        reason: 'One or both transactions do not belong to this company',
+        remedy: 'Refresh the transactions list and retry.',
+      });
+    }
+    if (a.bank_account_id === b.bank_account_id) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        message: 'Both transactions are in the same bank account',
+        reason: 'An intra-company transfer must involve two different accounts',
+        remedy: 'Pick the matching transaction from a different bank account.',
+      });
+    }
+    if (a.type === b.type) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        message: 'Both transactions are on the same side',
+        reason: `Both are ${a.type === 'debit' ? 'withdrawals' : 'deposits'} — a transfer needs one withdrawal and one deposit`,
+        remedy: 'Pick a deposit to pair with a withdrawal (or vice versa).',
+      });
+    }
+    if (Math.abs(parseFloat(a.amount) - parseFloat(b.amount)) > 0.005) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        message: 'Amounts do not match',
+        reason: `${a.amount} vs ${b.amount} — the two legs of a transfer must be for the same amount`,
+        remedy: 'Pick a transaction with exactly the same amount.',
+      });
+    }
+    if (a.currency_code !== b.currency_code) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        message: 'Accounts use different currencies',
+        reason: `${a.account_name} is in ${a.currency_code} while ${b.account_name} is in ${b.currency_code}`,
+        remedy: 'Cross-currency transfers must be categorised manually on each side.',
+      });
+    }
+
+    // If either transaction is already linked to a THIRD transaction,
+    // release that link first so nothing is left dangling.
+    await unlinkTransferCounterpart(client, req.companyId, a);
+    await unlinkTransferCounterpart(client, req.companyId, b);
+
+    await linkTransferPair(client, req.companyId, a.id, b.id, false);
+
+    await client.query('COMMIT');
+    res.json({
+      message: `Linked as intra-company transfer: ${a.account_name} ⇄ ${b.account_name}`,
+      transaction_id: a.id,
+      counterpart_id: b.id,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({
+      message: 'Could not link transfer',
+      reason: err.message,
+      remedy: 'Refresh the page and try again.',
+    });
+  } finally {
+    client.release();
   }
 });
 
@@ -1199,13 +1515,49 @@ router.post('/accounts/:id/auto-categorise', authMiddleware, async (req, res) =>
     }
 
     const unmatched = await pool.query(
-      `SELECT id, description, amount, type FROM bank_transactions
+      `SELECT id, date, description, amount, type FROM bank_transactions
        WHERE bank_account_id=$1 AND company_id=$2 AND status='unmatched'`,
       [req.params.id, req.companyId]
     );
 
     let updated = 0;
+    let transfersLinked = 0;
     for (const txn of unmatched.rows) {
+      // ── Intra-company transfer detection first (see import flow)
+      let transferCounterpartId = null;
+      try {
+        const cands = await findTransferCandidates(pool, req.companyId, req.params.id, txn);
+        if (isConfidentTransferMatch(txn, cands)) transferCounterpartId = cands[0].id;
+      } catch (tErr) {
+        console.error('Transfer detection failed for txn', txn.id, tErr.message);
+      }
+
+      if (transferCounterpartId) {
+        const linkClient = await pool.connect();
+        try {
+          await linkClient.query('BEGIN');
+          // Re-check both rows are still unmatched under lock before linking.
+          const still = await linkClient.query(
+            `SELECT id FROM bank_transactions
+             WHERE id = ANY($1::int[]) AND company_id=$2 AND status='unmatched'
+             FOR UPDATE`,
+            [[txn.id, transferCounterpartId], req.companyId]
+          );
+          if (still.rows.length === 2) {
+            await linkTransferPair(linkClient, req.companyId, txn.id, transferCounterpartId, true);
+            updated++;
+            transfersLinked++;
+          }
+          await linkClient.query('COMMIT');
+        } catch (linkErr) {
+          await linkClient.query('ROLLBACK');
+          console.error('Transfer auto-link failed for txn', txn.id, linkErr.message);
+        } finally {
+          linkClient.release();
+        }
+        continue;
+      }
+
       const auto = await autoCategoriseTransaction(txn, req.companyId);
       if (!auto) continue;
 
@@ -1249,9 +1601,14 @@ router.post('/accounts/:id/auto-categorise', authMiddleware, async (req, res) =>
       }
     }
 
+    const msgParts = [`Auto-categorised ${updated} transaction${updated === 1 ? '' : 's'}`];
+    if (transfersLinked > 0) {
+      msgParts.push(`${transfersLinked} linked as intra-company transfer${transfersLinked === 1 ? '' : 's'}`);
+    }
     res.json({
-      message: `Auto-categorised ${updated} transaction${updated === 1 ? '' : 's'}`,
+      message: msgParts.join(' · '),
       updated,
+      transfers_linked: transfersLinked,
       examined: unmatched.rows.length,
     });
   } catch (err) {

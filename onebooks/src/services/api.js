@@ -233,6 +233,7 @@ export const bankingAPI = {
   getSplits: (id) => api.get(`/banking/transactions/${id}/splits`),
   saveSplits: (id, splits) => api.post(`/banking/transactions/${id}/splits`, { splits }),
   autoCategorise: (accountId) => api.post(`/banking/accounts/${accountId}/auto-categorise`),
+  linkTransfer: (id, counterpartId) => api.post(`/banking/transactions/${id}/transfer`, { counterpart_id: counterpartId }),
 };
 
 export const filesAPI = {

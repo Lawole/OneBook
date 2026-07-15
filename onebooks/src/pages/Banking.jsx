@@ -3,7 +3,7 @@ import {
   Plus, Upload, X, Edit2, Trash2, CheckCircle, Link, Ban,
   RefreshCw, Building2, Tag, Scissors, Paperclip, ExternalLink,
   AlertTriangle, Info, Sparkles, Wallet,
-  ArrowUpRight, ArrowDownRight,
+  ArrowUpRight, ArrowDownRight, ArrowLeftRight,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -34,6 +34,7 @@ const STATUS_CONFIG = {
   matched:     { label: 'Matched',     bg: '#d1fae5', color: '#065f46', dot: '#10b981' },
   excluded:    { label: 'Excluded',    bg: '#f1f5f9', color: '#64748b', dot: '#94a3b8' },
   categorized: { label: 'Categorized', bg: '#dbeafe', color: '#1e40af', dot: '#3b82f6' },
+  transfer:    { label: 'Transfer',    bg: '#ede9fe', color: '#5b21b6', dot: '#8b5cf6' },
 };
 
 // ── error message helper ───────────────────────────────────────
@@ -315,7 +316,8 @@ const ImportModal = ({ account, onImported, onClose }) => {
           <Info size={16} style={{ flexShrink: 0, marginTop: 2 }} />
           <div>
             <strong>Recognised columns:</strong> Date, Description (or Narration / Memo / Details), Amount (or Debit &amp; Credit / Withdrawal &amp; Deposit), and an optional Reference / Cheque no.<br />
-            <strong>Auto-categorise:</strong> if a description contains an invoice number or a Chart-of-Account identifier, the transaction is matched automatically.
+            <strong>Auto-categorise:</strong> if a description contains an invoice number or a Chart-of-Account identifier, the transaction is matched automatically.<br />
+            <strong>Intra-company transfers:</strong> a withdrawal that matches a deposit in another of your accounts (same amount &amp; currency, within 3 days) is detected and linked as a transfer — less certain pairs appear as suggestions in the Match panel.
           </div>
         </div>
 
@@ -365,9 +367,11 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
   const [tab, setTab] = useState('categorize');
 
   // Match tab
-  const [suggestions,  setSuggestions]  = useState([]);
-  const [loadingSugg,  setLoadingSugg]  = useState(false);
-  const [matchSaving,  setMatchSaving]  = useState(null);
+  const [suggestions,   setSuggestions]   = useState([]);
+  const [transferSuggs, setTransferSuggs] = useState([]);
+  const [loadingSugg,   setLoadingSugg]   = useState(false);
+  const [matchSaving,   setMatchSaving]   = useState(null);
+  const [matchError,    setMatchError]    = useState('');
 
   // Categorize tab
   const [coaAccountId,  setCoaAccountId]  = useState(transaction.coa_account_id?.toString() || '');
@@ -413,8 +417,11 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
     if (tab !== 'match') return;
     setLoadingSugg(true);
     bankingAPI.getMatchSuggestions(transaction.id)
-      .then((res) => setSuggestions(res.data.suggestions))
-      .catch(() => setSuggestions([]))
+      .then((res) => {
+        setSuggestions(res.data.suggestions);
+        setTransferSuggs(res.data.transfer_suggestions || []);
+      })
+      .catch(() => { setSuggestions([]); setTransferSuggs([]); })
       .finally(() => setLoadingSugg(false));
   }, [tab, transaction.id]);
 
@@ -438,6 +445,17 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
       onSaved();
     } catch (err) { console.error(err); }
     finally { setMatchSaving(null); }
+  };
+
+  const handleLinkTransfer = async (suggestion) => {
+    setMatchSaving(`transfer-${suggestion.id}`);
+    setMatchError('');
+    try {
+      await bankingAPI.linkTransfer(transaction.id, suggestion.id);
+      onSaved();
+    } catch (err) {
+      setMatchError(buildErrorText(err, 'Could not link the transfer.'));
+    } finally { setMatchSaving(null); }
   };
 
   const txnAmount    = parseFloat(transaction.amount) || 0;
@@ -555,6 +573,44 @@ const CategorizePanel = ({ transaction, coaAccounts, onClose, onSaved, fmt }) =>
 
         {tab === 'match' && (
           <div>
+            {matchError && <ErrorPanel text={matchError} />}
+
+            {!loadingSugg && transferSuggs.length > 0 && (
+              <div style={{ marginBottom: 18 }}>
+                <div style={{ fontWeight: 600, color: '#5b21b6', marginBottom: 10, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <ArrowLeftRight size={14} />
+                  Possible intra-company transfer{transferSuggs.length > 1 ? 's' : ''}
+                </div>
+                {transferSuggs.map((s) => (
+                  <div key={`tr-${s.id}`} style={{ border: '1px solid #ddd6fe', background: '#faf5ff', borderRadius: 12, padding: '12px 14px', marginBottom: 10 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                      <div>
+                        <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', padding: '2px 7px', background: '#ede9fe', color: '#5b21b6', borderRadius: 4 }}>
+                          transfer
+                        </span>
+                        <span style={{ fontWeight: 600, color: '#0f172a', marginLeft: 8, fontSize: 13 }}>{s.party}</span>
+                      </div>
+                      <span style={{ fontWeight: 700, color: '#0f172a', fontSize: 14 }}>{fmt(s.amount)}</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {s.description || '—'}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#64748b', marginBottom: 8 }}>
+                      {fmtDate(s.date)}{s.same_date && <span style={{ color: '#7c3aed', fontWeight: 600 }}> · same day</span>}
+                    </div>
+                    <button
+                      className="btn btn-primary"
+                      style={{ width: '100%', padding: '6px 12px', fontSize: 13, background: '#7c3aed', borderColor: '#7c3aed' }}
+                      onClick={() => handleLinkTransfer(s)}
+                      disabled={!!matchSaving}
+                    >
+                      {matchSaving === `transfer-${s.id}` ? 'Linking…' : <><ArrowLeftRight size={14} /> Link as transfer</>}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div style={{ fontWeight: 600, color: '#475569', marginBottom: 12, fontSize: 13 }}>
               {loadingSugg
                 ? 'Finding matches…'
@@ -1218,6 +1274,12 @@ const Banking = () => {
                               </div>
                               {txn.reference        && <div style={{ fontSize: 12, color: '#94a3b8' }}>Ref: {txn.reference}</div>}
                               {txn.coa_account_name && <div style={{ fontSize: 12, color: '#4f46e5' }}>{txn.coa_account_code} – {txn.coa_account_name}</div>}
+                              {txn.matched_type === 'transfer' && txn.transfer_account_name && (
+                                <div style={{ fontSize: 12, color: '#7c3aed', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                  <ArrowLeftRight size={11} style={{ flexShrink: 0 }} />
+                                  {txn.type === 'debit' ? 'To' : 'From'} {txn.transfer_account_name}
+                                </div>
+                              )}
                               {txn.notes            && <div style={{ fontSize: 12, color: '#94a3b8', fontStyle: 'italic' }}>{txn.notes}</div>}
                             </td>
                             <td className="text-right" style={{ fontWeight: 700, whiteSpace: 'nowrap', color: '#0d9488', fontSize: 14 }}>
@@ -1230,7 +1292,7 @@ const Banking = () => {
                                 ? formatIn(txn.amount, txn.currency_code || selectedAccount?.currency_code)
                                 : ''}
                             </td>
-                            <td><StatusBadge status={txn.status} /></td>
+                            <td><StatusBadge status={txn.matched_type === 'transfer' && txn.status === 'matched' ? 'transfer' : txn.status} /></td>
                             <td className="text-right" style={{ whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
                               <button
                                 className="btn-icon"
