@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Download, TrendingUp, BarChart2, Activity, Users, Package, BookOpen, X } from 'lucide-react';
+import { Download, TrendingUp, BarChart2, Activity, Users, Package, BookOpen, FileText, X } from 'lucide-react';
 import Header from '../components/Header';
 import { reportAPI } from '../services/api';
 import { downloadFile } from '../utils/helpers';
@@ -501,6 +501,113 @@ const TrialBalanceReport = ({ data, dates, fmt }) => {
   );
 };
 
+const STATUS_STYLES = {
+  Paid:   { background: '#d1fae5', color: '#065f46' },
+  Unpaid: { background: '#fef3c7', color: '#92400e' },
+};
+
+// On-screen preview of the Invoice report — one row per invoice line item,
+// mirroring the FIRS B2B template. Invoice-level values render on the first
+// line of each invoice only; the Excel/CSV export repeats them on every row
+// exactly as the upload template requires.
+const InvoiceReport = ({ data, dates, fmt }) => {
+  const rows = data.rows || [];
+  const summary = data.summary || {};
+  const isoDate = (d) => (d ? String(d).split('T')[0] : '—');
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 18, color: '#1e293b' }}>Invoice Report</div>
+          <div style={{ fontSize: 13, color: '#64748b', marginTop: 2 }}>
+            {dates.start && dates.end ? `${dates.start} to ${dates.end}` : 'All Time'}
+            {' · '}{summary.invoice_count || 0} invoice{summary.invoice_count === 1 ? '' : 's'}
+            {' · '}{summary.line_count || 0} line item{summary.line_count === 1 ? '' : 's'}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ background: '#f1f5f9', color: '#475569', padding: '8px 16px', borderRadius: 10, fontWeight: 600, fontSize: 13 }}>
+            VAT: {fmt(summary.vat || 0)}
+          </div>
+          <div style={{ background: '#eff6ff', color: '#1d4ed8', padding: '8px 16px', borderRadius: 10, fontWeight: 700, fontSize: 15 }}>
+            Total: {fmt(summary.total || 0)}
+          </div>
+        </div>
+      </div>
+      {rows.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '48px 0', color: '#94a3b8' }}>
+          No invoices found for the selected period.
+        </div>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table className="table" style={{ minWidth: 1080 }}>
+            <thead>
+              <tr>
+                <th>Invoice #</th>
+                <th>Issue Date</th>
+                <th>Due Date</th>
+                <th>Customer</th>
+                <th>Item</th>
+                <th>Category</th>
+                <th className="text-right">Qty</th>
+                <th className="text-right">Unit Price</th>
+                <th className="text-right">Amount</th>
+                <th className="text-right">VAT</th>
+                <th className="text-right">Total</th>
+                <th>Currency</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => {
+                const firstLine = i === 0 || rows[i - 1].invoice_id !== r.invoice_id;
+                const badge = STATUS_STYLES[r.payment_status] || STATUS_STYLES.Unpaid;
+                return (
+                  <tr key={i} style={firstLine && i !== 0 ? { borderTop: '2px solid #e2e8f0' } : undefined}>
+                    <td className="font-medium" style={{ fontFamily: 'monospace' }}>{firstLine ? r.invoice_number : ''}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>{firstLine ? isoDate(r.issue_date) : ''}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>{firstLine ? isoDate(r.due_date) : ''}</td>
+                    <td>{firstLine ? r.customer_name : ''}</td>
+                    <td style={{ color: '#475569' }}>{r.item_name || '—'}</td>
+                    <td style={{ color: '#64748b' }}>{r.item_category || '—'}</td>
+                    <td className="text-right">{r.quantity != null ? r.quantity.toLocaleString() : '—'}</td>
+                    <td className="text-right">{r.unit_price != null ? fmt(r.unit_price) : '—'}</td>
+                    <td className="text-right">{r.amount != null ? fmt(r.amount) : '—'}</td>
+                    <td className="text-right" style={{ color: '#64748b' }}>{firstLine ? fmt(r.vat_amount) : ''}</td>
+                    <td className="text-right" style={{ fontWeight: 600 }}>{firstLine ? fmt(r.total) : ''}</td>
+                    <td>{firstLine ? r.currency : ''}</td>
+                    <td>
+                      {firstLine && (
+                        <span style={{ ...badge, padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600 }}>
+                          {r.payment_status}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr style={{ fontWeight: 700, borderTop: '2px solid #1e293b', background: '#f8fafc' }}>
+                <td colSpan={9}>Totals ({summary.invoice_count || 0} invoices)</td>
+                <td className="text-right">{fmt(summary.vat || 0)}</td>
+                <td className="text-right">{fmt(summary.total || 0)}</td>
+                <td colSpan={2} />
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+      <div style={{ marginTop: 14, fontSize: 12.5, color: '#64748b', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '10px 14px' }}>
+        The Excel export follows the FIRS B2B invoice upload template (28 columns, mandatory fields highlighted in red,
+        dates as dd/mm/yyyy). Fields not yet tracked in OneBooks — Customer TIN, Zip Code, City, State and Country —
+        are exported blank and should be completed before uploading to the portal. HSN and ISIC codes are imputed
+        automatically by the portal during upload.
+      </div>
+    </div>
+  );
+};
+
 const REPORT_TYPES = [
   { value: 'profit-loss',        label: 'Profit & Loss',       icon: TrendingUp },
   { value: 'balance-sheet',      label: 'Balance Sheet',       icon: BarChart2  },
@@ -508,9 +615,10 @@ const REPORT_TYPES = [
   { value: 'sales-by-customer',  label: 'Sales by Customer',   icon: Users      },
   { value: 'sales-by-item',      label: 'Sales by Item',       icon: Package    },
   { value: 'trial-balance',      label: 'Trial Balance',       icon: BookOpen   },
+  { value: 'invoice',            label: 'Invoice',             icon: FileText   },
 ];
 
-const EXPORTABLE = ['profit-loss', 'balance-sheet', 'cash-flow'];
+const EXPORTABLE = ['profit-loss', 'balance-sheet', 'cash-flow', 'invoice'];
 
 // ── Date preset helpers ─────────────────────────────────────────
 const toISO = (d) => d.toISOString().split('T')[0];
@@ -647,6 +755,7 @@ const Reports = () => {
     else if (reportType === 'sales-by-customer') return reportAPI.getSalesByCustomer(params);
     else if (reportType === 'sales-by-item')     return reportAPI.getSalesByItem(params);
     else if (reportType === 'trial-balance')     return reportAPI.getTrialBalance(params);
+    else if (reportType === 'invoice')           return reportAPI.getInvoiceReport(params);
     throw new Error('Unknown report type');
   };
 
@@ -699,6 +808,7 @@ const Reports = () => {
       if      (reportType === 'profit-loss')   res = await reportAPI.exportProfitLoss(format, params);
       else if (reportType === 'balance-sheet') res = await reportAPI.exportBalanceSheet(format);
       else if (reportType === 'cash-flow')     res = await reportAPI.exportCashFlow(format, params);
+      else if (reportType === 'invoice')       res = await reportAPI.exportInvoiceReport(format, params);
       downloadFile(res.data, filename);
     } catch (err) {
       alert('Failed to export report');
@@ -832,6 +942,9 @@ const Reports = () => {
             )}
             {data && reportType === 'trial-balance' && (
               <TrialBalanceReport data={data} dates={{ start: startDate, end: endDate }} fmt={fmt} />
+            )}
+            {data && reportType === 'invoice' && (
+              <InvoiceReport data={data} dates={{ start: startDate, end: endDate }} fmt={fmt} />
             )}
           </div>
         </div>

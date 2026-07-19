@@ -40,6 +40,13 @@ const STATEMENTS = [
 
   `CREATE INDEX IF NOT EXISTS idx_fx_rates_company_date
      ON fx_rates(company_id, currency_code, rate_date DESC)`,
+
+  // ── Invoice discount / VAT columns (used by the Invoice report) ──
+  `ALTER TABLE invoices
+     ADD COLUMN IF NOT EXISTS discount_percent DECIMAL(5,2) DEFAULT 0`,
+
+  `ALTER TABLE invoices
+     ADD COLUMN IF NOT EXISTS vat_rate DECIMAL(5,2) DEFAULT 0`,
 ];
 
 async function runMigrations() {

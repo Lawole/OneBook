@@ -709,6 +709,237 @@ router.get('/sales-by-item', authMiddleware, async (req, res) => {
   }
 });
 
+// ── Invoice Report (FIRS B2B template) ───────────────────────────────────────
+// One row per invoice line item, shaped to the 28-column FIRS B2B e-invoicing
+// template. Multi-line invoices repeat invoice/customer data on every row —
+// the FIRS portal groups rows by invoice number during processing.
+
+const INVOICE_REPORT_COLUMNS = [
+  { key: 'invoice_number',   header: 'Invoice Number',               mandatory: true,  width: 16 },
+  { key: 'reference',        header: 'Reference',                    mandatory: false, width: 12 },
+  { key: 'note',             header: 'Note',                         mandatory: false, width: 24 },
+  { key: 'currency',         header: 'Currency',                     mandatory: true,  width: 10 },
+  { key: 'item_name',        header: 'Item Name',                    mandatory: true,  width: 28 },
+  { key: 'item_category',    header: 'Item Category',                mandatory: true,  width: 18 },
+  { key: 'hsn_code',         header: 'HSN Code',                     mandatory: true,  width: 12 },
+  { key: 'isic_code',        header: 'ISIC Code',                    mandatory: true,  width: 12 },
+  { key: 'quantity',         header: 'Quantity',                     mandatory: true,  width: 10, numeric: true },
+  { key: 'unit_price',       header: 'Unit Price',                   mandatory: true,  width: 14, numeric: true },
+  { key: 'amount',           header: 'Amount',                       mandatory: true,  width: 14, numeric: true },
+  { key: 'subtotal',         header: 'Sub Total',                    mandatory: true,  width: 14, numeric: true },
+  { key: 'discount_total',   header: 'Discount Total',               mandatory: false, width: 14, numeric: true },
+  { key: 'vat_amount',       header: 'Zero Value-Added Tax',         mandatory: true,  width: 18, numeric: true },
+  { key: 'vat_percent',      header: 'Zero Value-Added Tax %',       mandatory: true,  width: 18, numeric: true },
+  { key: 'total',            header: 'Total',                        mandatory: true,  width: 14, numeric: true },
+  { key: 'issue_date',       header: 'Issue Date',                   mandatory: true,  width: 12 },
+  { key: 'due_date',         header: 'Due Date',                     mandatory: false, width: 12 },
+  { key: 'customer_name',    header: 'Customer Name',                mandatory: true,  width: 26 },
+  { key: 'customer_email',   header: 'Customer Email',               mandatory: true,  width: 26 },
+  { key: 'customer_tin',     header: 'Customer TIN',                 mandatory: true,  width: 14 },
+  { key: 'customer_phone',   header: 'Customer Phone',               mandatory: true,  width: 16 },
+  { key: 'customer_zip',     header: 'Customer Zip Code',            mandatory: true,  width: 14 },
+  { key: 'customer_address', header: 'Customer Address',             mandatory: true,  width: 30 },
+  { key: 'customer_city',    header: 'Customer City',                mandatory: true,  width: 14 },
+  { key: 'customer_state',   header: 'Customer State',               mandatory: true,  width: 14 },
+  { key: 'customer_country', header: 'Customer Country',             mandatory: true,  width: 16 },
+  { key: 'payment_status',   header: 'Payment Status (paid/unpaid)', mandatory: false, width: 22 },
+];
+
+// FIRS accepts dd/mm/yyyy only.
+const toFirsDate = (value) => {
+  if (!value) return '';
+  const d = value instanceof Date ? value : new Date(value);
+  if (isNaN(d)) return '';
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}/${d.getUTCFullYear()}`;
+};
+
+// Invoice numbers may only contain letters, numbers and hyphens on the portal.
+const toFirsInvoiceNumber = (value) =>
+  String(value || '').trim().replace(/[^A-Za-z0-9-]+/g, '-');
+
+const round2 = (n) => Math.round(n * 100) / 100;
+
+async function getInvoiceReportRows(companyId, { start_date, end_date, status }) {
+  const params = [companyId];
+  let filter = '';
+  if (start_date) { filter += ` AND i.invoice_date >= $${params.length + 1}`; params.push(start_date); }
+  if (end_date)   { filter += ` AND i.invoice_date <= $${params.length + 1}`; params.push(end_date); }
+  if (status)     { filter += ` AND i.status = $${params.length + 1}`;        params.push(status); }
+
+  const [companyR, linesR] = await Promise.all([
+    pool.query(`SELECT base_currency FROM companies WHERE id = $1`, [companyId]),
+    pool.query(`
+      SELECT
+        i.id AS invoice_id, i.invoice_number, i.notes, i.invoice_date, i.due_date,
+        i.subtotal, i.tax_amount, i.total_amount, i.status,
+        COALESCE(i.discount_percent, 0) AS discount_percent,
+        COALESCE(i.vat_rate, 0)         AS vat_rate,
+        cur.code        AS currency_code,
+        c.name          AS customer_name,
+        c.company_name  AS customer_company,
+        c.email         AS customer_email,
+        c.phone         AS customer_phone,
+        c.address       AS customer_address,
+        ii.description  AS item_name,
+        it.category     AS item_category,
+        ii.quantity, ii.unit_price, ii.line_total
+      FROM invoices i
+      JOIN customers c        ON i.customer_id = c.id
+      LEFT JOIN invoice_items ii ON ii.invoice_id = i.id
+      LEFT JOIN items it         ON ii.item_id = it.id
+      LEFT JOIN currencies cur   ON i.currency_id = cur.id
+      WHERE i.company_id = $1 ${filter}
+      ORDER BY i.invoice_date ASC, i.id ASC, ii.id ASC
+    `, params),
+  ]);
+
+  const baseCurrency = companyR.rows[0]?.base_currency || 'NGN';
+
+  const rows = linesR.rows.map(r => {
+    const subtotal   = parseFloat(r.subtotal) || 0;
+    const taxAmount  = parseFloat(r.tax_amount) || 0;
+    const vatRate    = parseFloat(r.vat_rate) || 0;
+    const discount   = round2(subtotal * ((parseFloat(r.discount_percent) || 0) / 100));
+    // Fall back to the effective rate when vat_rate wasn't stored explicitly.
+    const vatPercent = vatRate > 0 ? vatRate : (subtotal > 0 ? round2((taxAmount / subtotal) * 100) : 0);
+    return {
+      invoice_id:       r.invoice_id,
+      invoice_number:   r.invoice_number,
+      reference:        '',
+      note:             r.notes || '',
+      currency:         r.currency_code || baseCurrency,
+      item_name:        r.item_name || '',
+      item_category:    r.item_category || '',
+      hsn_code:         '',   // auto-imputed by the FIRS portal from onboarding data
+      isic_code:        '',   // auto-imputed by the FIRS portal from onboarding data
+      quantity:         r.quantity != null ? parseFloat(r.quantity) : null,
+      unit_price:       r.unit_price != null ? parseFloat(r.unit_price) : null,
+      amount:           r.line_total != null ? parseFloat(r.line_total) : null,
+      subtotal,
+      discount_total:   discount,
+      vat_amount:       taxAmount,
+      vat_percent:      vatPercent,
+      total:            parseFloat(r.total_amount) || 0,
+      issue_date:       r.invoice_date,
+      due_date:         r.due_date,
+      customer_name:    r.customer_company || r.customer_name || '',
+      customer_email:   r.customer_email || '',
+      customer_tin:     '',   // not yet captured in OneBooks — complete before upload
+      customer_phone:   r.customer_phone || '',
+      customer_zip:     '',
+      customer_address: r.customer_address || '',
+      customer_city:    '',
+      customer_state:   '',
+      customer_country: '',
+      payment_status:   r.status === 'paid' ? 'Paid' : 'Unpaid',
+      status:           r.status,
+    };
+  });
+
+  const invoiceIds = new Set(rows.map(r => r.invoice_id));
+  const seen = new Set();
+  let totalSubtotal = 0, totalVat = 0, totalAmount = 0;
+  for (const r of rows) {
+    if (!seen.has(r.invoice_id)) {
+      seen.add(r.invoice_id);
+      totalSubtotal += r.subtotal;
+      totalVat      += r.vat_amount;
+      totalAmount   += r.total;
+    }
+  }
+
+  return {
+    rows,
+    summary: {
+      invoice_count: invoiceIds.size,
+      line_count:    rows.length,
+      subtotal:      round2(totalSubtotal),
+      vat:           round2(totalVat),
+      total:         round2(totalAmount),
+    },
+  };
+}
+
+// Invoice Report - JSON view
+router.get('/invoice', authMiddleware, async (req, res) => {
+  const { start_date, end_date, status } = req.query;
+  try {
+    const { rows, summary } = await getInvoiceReportRows(req.companyId, { start_date, end_date, status });
+    res.json({
+      rows,
+      summary,
+      period: { start_date: start_date || null, end_date: end_date || null },
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error generating invoice report', error: error.message });
+  }
+});
+
+// Invoice Report Export - Excel matches the FIRS B2B upload template exactly
+// (28 columns, mandatory headers highlighted red, dates as dd/mm/yyyy).
+router.get('/invoice/export', authMiddleware, async (req, res) => {
+  const { format = 'excel', start_date, end_date, status } = req.query;
+  try {
+    const { rows } = await getInvoiceReportRows(req.companyId, { start_date, end_date, status });
+
+    const toCellValues = (r) => INVOICE_REPORT_COLUMNS.map(col => {
+      switch (col.key) {
+        case 'invoice_number': return toFirsInvoiceNumber(r.invoice_number);
+        case 'issue_date':     return toFirsDate(r.issue_date);
+        case 'due_date':       return toFirsDate(r.due_date);
+        default: {
+          const v = r[col.key];
+          if (col.numeric) return v == null ? '' : round2(v);
+          return v == null ? '' : v;
+        }
+      }
+    });
+
+    if (format === 'excel') {
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Template');
+
+      const headerRow = worksheet.addRow(INVOICE_REPORT_COLUMNS.map(c => c.header));
+      headerRow.height = 22;
+      INVOICE_REPORT_COLUMNS.forEach((col, idx) => {
+        const cell = headerRow.getCell(idx + 1);
+        cell.font = col.mandatory
+          ? { bold: true, color: { argb: 'FFFFFFFF' } }
+          : { bold: true, color: { argb: 'FF000000' } };
+        if (col.mandatory) {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF0000' } };
+        }
+        cell.alignment = { vertical: 'middle', wrapText: true };
+        worksheet.getColumn(idx + 1).width = col.width;
+        if (col.numeric) worksheet.getColumn(idx + 1).numFmt = '#,##0.00';
+      });
+      worksheet.views = [{ state: 'frozen', ySplit: 1 }];
+
+      rows.forEach(r => worksheet.addRow(toCellValues(r)));
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', 'attachment; filename=invoice_report_firs_b2b.xlsx');
+      await workbook.xlsx.write(res);
+      res.end();
+    } else {
+      const escapeCSV = (v) => {
+        const s = String(v == null ? '' : v);
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      let csv = INVOICE_REPORT_COLUMNS.map(c => escapeCSV(c.header)).join(',') + '\n';
+      rows.forEach(r => { csv += toCellValues(r).map(escapeCSV).join(',') + '\n'; });
+
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename=invoice_report_firs_b2b.csv');
+      res.send(csv);
+    }
+  } catch (error) {
+    res.status(500).json({ message: 'Error exporting invoice report', error: error.message });
+  }
+});
+
 // ── Trial Balance ─────────────────────────────────────────────────────────────
 // CoA.balance is the canonical, journal-maintained ending balance. When a
 // date range is supplied we filter to journal-line movements within that

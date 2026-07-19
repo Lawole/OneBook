@@ -131,6 +131,8 @@ export const reportAPI = {
     if (isDemoMode()) return Promise.reject(new Error('Demo mode'));
     return api.get('/reports/trial-balance', { params });
   },
+  getInvoiceReport: (params) => api.get('/reports/invoice', { params }),
+  exportInvoiceReport: (format, params) => api.get('/reports/invoice/export', { params: { format, ...params }, responseType: 'blob' }),
   exportProfitLoss: (format, params) => api.get('/reports/profit-loss/export', { params: { format, ...params }, responseType: 'blob' }),
   exportBalanceSheet: (format) => api.get('/reports/balance-sheet/export', { params: { format }, responseType: 'blob' }),
   exportCashFlow: (format, params) => api.get('/reports/cash-flow/export', { params: { format, ...params }, responseType: 'blob' }),
